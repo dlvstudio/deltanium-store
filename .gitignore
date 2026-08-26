@@ -1,0 +1,11 @@
+bin/
+obj/
+logs/
+FileStorage/
+uploads/
+TestResults/
+
+# Generated at first registration — contains mnemonic + private key
+node_info.json
+
+.DS_Store

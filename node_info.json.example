@@ -1,0 +1,10 @@
+{
+  "mnemonic": "REPLACE_WITH_GENERATED_MNEMONIC",
+  "privateKey": "REPLACE_WITH_GENERATED_PRIVATE_KEY",
+  "publicKey": "REPLACE_WITH_GENERATED_PUBLIC_KEY",
+  "apiResponse": {
+    "id": "store-node-id",
+    "publicKey": "REPLACE_WITH_GENERATED_PUBLIC_KEY",
+    "endpoint": "http://localhost:5001"
+  }
+}
