@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
+using DeltaniumStore.Data;
 using DeltaniumStore.Models;
 using System.Text.Json;
 using System.Linq;
@@ -30,15 +31,24 @@ namespace DeltaniumStore.Services
         private readonly string _fileMetadataPath;
         private readonly string _blockMetadataPath;
         private readonly string _blockDataPath;
+        private readonly IFileMetadataStore _fileMetadataStore;
+        private readonly IBlockMetadataStore _blockMetadataStore;
         private Dictionary<string, FileMetadata> _fileMetadataCache;
         private Dictionary<string, BlockMetadata> _blockMetadataCache;
 
         public FileStorageService(string storageBasePath)
+            : this(storageBasePath, new JsonFileMetadataStore(storageBasePath), new JsonBlockMetadataStore(storageBasePath))
+        {
+        }
+
+        public FileStorageService(string storageBasePath, IFileMetadataStore fileMetadataStore, IBlockMetadataStore blockMetadataStore)
         {
             _storageBasePath = storageBasePath;
             _fileMetadataPath = Path.Combine(_storageBasePath, "file_metadata");
             _blockMetadataPath = Path.Combine(_storageBasePath, "block_metadata");
             _blockDataPath = Path.Combine(_storageBasePath, "block_data");
+            _fileMetadataStore = fileMetadataStore;
+            _blockMetadataStore = blockMetadataStore;
             
             _fileMetadataCache = new Dictionary<string, FileMetadata>();
             _blockMetadataCache = new Dictionary<string, BlockMetadata>();
@@ -71,56 +81,8 @@ namespace DeltaniumStore.Services
             try
             {
                 EnsureStorageDirectories();
-
-                // Use case-insensitive deserialization to handle both camelCase and PascalCase JSON
-                var options = new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                };
-
-                // Load file metadata
-                foreach (var file in Directory.GetFiles(_fileMetadataPath, "*.metadata.json"))
-                {
-                    try
-                    {
-                        var json = File.ReadAllText(file);
-                        var metadata = JsonSerializer.Deserialize<FileMetadata>(json, options);
-                        if (metadata != null && !string.IsNullOrEmpty(metadata.FileId))
-                        {
-                            // Debug: Log ParentFileId for comments before caching
-                            if (string.Equals(metadata.Type, "comment", StringComparison.OrdinalIgnoreCase))
-                            {
-                                Console.WriteLine($"[LoadMetadata] Loading comment: FileId={metadata.FileId}, ParentFileId={metadata.ParentFileId ?? "(null)"}, Type={metadata.Type}");
-                                // Also check raw JSON
-                                if (json.Contains("parentFileId"))
-                                {
-                                    Console.WriteLine($"[LoadMetadata] JSON contains 'parentFileId' (camelCase)");
-                                }
-                                if (json.Contains("ParentFileId"))
-                                {
-                                    Console.WriteLine($"[LoadMetadata] JSON contains 'ParentFileId' (PascalCase)");
-                                }
-                            }
-                            _fileMetadataCache[metadata.FileId] = metadata;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[LoadMetadata] Error loading metadata from {file}: {ex.Message}");
-                    }
-                }
-
-                // Load block metadata
-                foreach (var file in Directory.GetFiles(_blockMetadataPath, "*.metadata.json"))
-                {
-                    var json = File.ReadAllText(file);
-                    var metadata = JsonSerializer.Deserialize<BlockMetadata>(json, options);
-                    if (metadata != null && !string.IsNullOrEmpty(metadata.BlockId))
-                    {
-                        _blockMetadataCache[metadata.BlockId] = metadata;
-                    }
-                }
-
+                _fileMetadataCache = _fileMetadataStore.LoadAll();
+                _blockMetadataCache = _blockMetadataStore.LoadAll();
                 Console.WriteLine($"Loaded {_fileMetadataCache.Count} file metadata entries");
                 Console.WriteLine($"Loaded {_blockMetadataCache.Count} block metadata entries");
             }
@@ -146,20 +108,10 @@ namespace DeltaniumStore.Services
                     Console.WriteLine($"FileStorage: Normalized RecipientPubKey {originalKey} -> {metadata.RecipientPubKey}");
                 }
                 
-                // Use camelCase naming policy to match Flutter's JSON format
-                var serializeOptions = new JsonSerializerOptions
-                {
-                    PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-                    WriteIndented = false
-                };
-                var json = JsonSerializer.Serialize(metadata, serializeOptions);
-                var path = Path.Combine(_fileMetadataPath, $"{metadata.FileId}.metadata.json");
-                await File.WriteAllTextAsync(path, json);
-                // Ensure file is flushed to disk
-                await File.WriteAllTextAsync(path, json); // Write twice to ensure flush
+                _fileMetadataStore.Upsert(metadata);
                 _fileMetadataCache[metadata.FileId] = metadata;
                 Console.WriteLine($"[StoreFileMetadataAsync] Stored file metadata for {metadata.FileId}, ParentFileId={metadata.ParentFileId ?? "(null)"}, Type={metadata.Type}, IsPublic={metadata.IsPublic}");
-                return metadata;
+                return await Task.FromResult(metadata);
             }
             catch (Exception ex)
             {
@@ -194,9 +146,7 @@ namespace DeltaniumStore.Services
                     BlockHash = await CalculateBlockHashAsync(blockDataPath)
                 };
 
-                var json = JsonSerializer.Serialize(blockMetadata);
-                var metadataPath = Path.Combine(_blockMetadataPath, $"{blockId}.metadata.json");
-                await File.WriteAllTextAsync(metadataPath, json);
+                _blockMetadataStore.Upsert(blockMetadata);
                 _blockMetadataCache[blockId] = blockMetadata;
 
                 // NOTE: Block IDs are now managed in file metadata only
@@ -204,7 +154,6 @@ namespace DeltaniumStore.Services
 
                 Console.WriteLine($"Successfully stored anonymous block {blockId}");
                 Console.WriteLine($"- Data path: {blockDataPath}");
-                Console.WriteLine($"- Metadata path: {metadataPath}");
                 return blockMetadata;
             }
             catch (Exception ex)
@@ -315,31 +264,17 @@ namespace DeltaniumStore.Services
             // When a file is shared with multiple users, they have different fileIds but same ownerPubKey
             FileMetadata? originalMetadata = null;
             
-            // Try to load original metadata from cache or disk
+            // Try to load original metadata from cache (reload from store if needed)
             if (!_fileMetadataCache.TryGetValue(fileId, out originalMetadata))
             {
-                var metadataPath = Path.Combine(_fileMetadataPath, $"{fileId}.metadata.json");
-                if (File.Exists(metadataPath))
+                LoadMetadata();
+                _fileMetadataCache.TryGetValue(fileId, out originalMetadata);
+                if (originalMetadata != null && !string.IsNullOrEmpty(originalMetadata.FileId))
                 {
-                    var json = await File.ReadAllTextAsync(metadataPath);
-                    // 🆕 FIX: Use case-insensitive deserialization to handle camelCase JSON
-                    var options = new JsonSerializerOptions
-                    {
-                        PropertyNameCaseInsensitive = true
-                    };
-                    originalMetadata = JsonSerializer.Deserialize<FileMetadata>(json, options);
-                    if (originalMetadata != null && !string.IsNullOrEmpty(originalMetadata.FileId))
-                    {
-                        _fileMetadataCache[fileId] = originalMetadata;
-                        var ownerKeyPreview = !string.IsNullOrEmpty(originalMetadata.OwnerPubKey) 
-                            ? originalMetadata.OwnerPubKey.Substring(0, Math.Min(10, originalMetadata.OwnerPubKey.Length)) 
-                            : "(null)";
-                        Log.Information($"[GetFileMetadataAsync] Loaded original metadata from disk: FileId={originalMetadata.FileId}, OwnerPubKey={ownerKeyPreview}..., ParentFileId={originalMetadata.ParentFileId ?? "(null)"}");
-                    }
-                    else
-                    {
-                        Log.Warning($"[GetFileMetadataAsync] ⚠️ Failed to deserialize metadata from disk: FileId={fileId}, JSON length={json.Length}");
-                    }
+                    var ownerKeyPreview = !string.IsNullOrEmpty(originalMetadata.OwnerPubKey)
+                        ? originalMetadata.OwnerPubKey.Substring(0, Math.Min(10, originalMetadata.OwnerPubKey.Length))
+                        : "(null)";
+                    Log.Information($"[GetFileMetadataAsync] Loaded original metadata from store: FileId={originalMetadata.FileId}, OwnerPubKey={ownerKeyPreview}..., ParentFileId={originalMetadata.ParentFileId ?? "(null)"}");
                 }
             }
 
@@ -479,29 +414,19 @@ namespace DeltaniumStore.Services
                 return relatedFileMetadata;
             }
             
-            Log.Information($"[GetFileMetadataAsync] ⚠️ No related file found by ParentFileId, trying to load from disk...");
+            Log.Information($"[GetFileMetadataAsync] ⚠️ No related file found by ParentFileId, reloading metadata store...");
 
-            // 🆕 Final fallback: Try loading from disk (for backward compatibility)
-            // But still check if RecipientPubKey matches
-            var finalMetadataPath = Path.Combine(_fileMetadataPath, $"{fileId}.metadata.json");
-            if (File.Exists(finalMetadataPath))
+            // Final fallback: reload store and check RecipientPubKey match
+            LoadMetadata();
+            if (_fileMetadataCache.TryGetValue(fileId, out var metadata) && metadata != null && !string.IsNullOrEmpty(metadata.FileId))
             {
-                var json = await File.ReadAllTextAsync(finalMetadataPath);
-                // 🆕 FIX: Use case-insensitive deserialization to handle camelCase JSON
-                var options = new JsonSerializerOptions
-                {
-                    PropertyNameCaseInsensitive = true
-                };
-                var metadata = JsonSerializer.Deserialize<FileMetadata>(json, options);
-                if (metadata != null && !string.IsNullOrEmpty(metadata.FileId))
-                {
                     var recipientKeyPreview = !string.IsNullOrEmpty(metadata.RecipientPubKey) 
                         ? metadata.RecipientPubKey.Substring(0, Math.Min(20, metadata.RecipientPubKey.Length)) 
                         : "(null)";
                     var ownerKeyPreview = !string.IsNullOrEmpty(metadata.OwnerPubKey) 
                         ? metadata.OwnerPubKey.Substring(0, Math.Min(20, metadata.OwnerPubKey.Length)) 
                         : "(null)";
-                    Log.Information($"[GetFileMetadataAsync] 🔍 Loaded metadata from disk: FileId={metadata.FileId}, RecipientPubKey={recipientKeyPreview}..., OwnerPubKey={ownerKeyPreview}..., ParentFileId={metadata.ParentFileId ?? "(null)"}");
+                    Log.Information($"[GetFileMetadataAsync] 🔍 Loaded metadata from store: FileId={metadata.FileId}, RecipientPubKey={recipientKeyPreview}..., OwnerPubKey={ownerKeyPreview}..., ParentFileId={metadata.ParentFileId ?? "(null)"}");
                     
                     // 🆕 FIX: For public posts, accept them regardless of RecipientPubKey
                     if (metadata.IsPublic || string.Equals(metadata.EncryptedType, "public", StringComparison.OrdinalIgnoreCase))
@@ -639,7 +564,6 @@ namespace DeltaniumStore.Services
                         Console.WriteLine($"⚠️ Loaded metadata without RecipientPubKey but no matching user entry found. FileId={metadata.FileId}");
                         // Don't return - this will throw FileNotFoundException below
                     }
-                }
             }
 
             // If we get here, no matching metadata was found
@@ -709,8 +633,8 @@ namespace DeltaniumStore.Services
             var exists = _fileMetadataCache.ContainsKey(fileId);
             if (!exists)
             {
-                var metadataPath = Path.Combine(_fileMetadataPath, $"{fileId}.metadata.json");
-                exists = File.Exists(metadataPath);
+                LoadMetadata();
+                exists = _fileMetadataCache.ContainsKey(fileId);
             }
             return await Task.FromResult(exists);
         }
@@ -833,30 +757,25 @@ namespace DeltaniumStore.Services
 
                 if (!_fileMetadataCache.TryGetValue(fileId, out var metadata))
                 {
-                    var metaPath = Path.Combine(_fileMetadataPath, $"{fileId}.metadata.json");
-                    if (!File.Exists(metaPath)) return false;
-                    var json = await File.ReadAllTextAsync(metaPath);
-                    metadata = JsonSerializer.Deserialize<FileMetadata>(json);
+                    return false;
                 }
 
                 if (metadata == null) return false;
 
                 // Delete file metadata
-                var path = Path.Combine(_fileMetadataPath, $"{fileId}.metadata.json");
-                if (File.Exists(path)) File.Delete(path);
+                _fileMetadataStore.Delete(fileId);
                 _fileMetadataCache.Remove(fileId);
 
                 // Best-effort: delete block 0 (metadata block) if present
                 if (!string.IsNullOrEmpty(metadata.FirstBlockId))
                 {
                     var bData = Path.Combine(_blockDataPath, $"{metadata.FirstBlockId}.data");
-                    var bMeta = Path.Combine(_blockMetadataPath, $"{metadata.FirstBlockId}.metadata.json");
                     if (File.Exists(bData)) File.Delete(bData);
-                    if (File.Exists(bMeta)) File.Delete(bMeta);
+                    _blockMetadataStore.Delete(metadata.FirstBlockId);
                     _blockMetadataCache.Remove(metadata.FirstBlockId);
                 }
 
-                return true;
+                return await Task.FromResult(true);
             }
             catch (Exception ex)
             {

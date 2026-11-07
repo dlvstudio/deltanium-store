@@ -88,39 +88,48 @@ A secure file storage node that stores encrypted posts/files and exposes APIs fo
 
 ## Configuration
 
-The service can be configured through appsettings.json:
-
 ```json
 {
-  "FileStorage": {
-    "BasePath": "./uploads"
+  "CentralApi": { "BaseUrl": "http://localhost:5002", "Timeout": 30 },
+  "InternalApi": { "Token": "" },
+  "NodeRegistration": {
+    "ApiUrl": "http://localhost:5002",
+    "Endpoint": "http://localhost:5001",
+    "Voucher": ""
   },
-  "Logging": {
-    "LogLevel": {
-      "Default": "Information",
-      "Microsoft.AspNetCore": "Warning"
-    }
-  }
+  "Storage": { "Provider": "MySql" },
+  "ConnectionStrings": { "Default": "" }
 }
 ```
 
+**Required for local/prod (do not commit real values):**
+
+| Setting | Source |
+|---------|--------|
+| MySQL connection | User Secrets `deltanium-store-local-secrets` |
+| Registration voucher | env `STORE_VOUCHER` or `NodeRegistration:Voucher` (user-secrets) |
+| Internal API token | env `INTERNAL_API_TOKEN` or `InternalApi:Token` (same value as Central API) |
+
+If voucher is missing, the node starts but **skips** registration (warning logged).
+
 ## Development Setup
 
-1. Install .NET 7.0 SDK
-2. Clone the repository
-3. Run the following commands:
+1. Install .NET 8 SDK
+2. Set secrets / env (connection, voucher, internal token)
+3. Run:
 ```bash
 cd deltanium-store
 dotnet restore
 dotnet run
 ```
 
-The service will start on http://localhost:5000 by default.
+Default listen URL comes from `NodeRegistration:Endpoint` / Kestrel config (often `http://localhost:5001`).
 
 ## Integration with Central API
 
-- Discovers following relationships via the central API (default `http://localhost:5002`).
-- The mobile app discovers storage nodes from the central API (`GET /api/storenode/list`) and uploads posts here via the raw endpoints above.
+- Following list / user info via Central API (`CentralApi:BaseUrl`).
+- PRE `validate-token` calls include `X-Internal-Token`.
+- App discovers stores via `GET /api/storenode/list`, may upload the **same** encrypted `fileId` to multiple stores (N-of-M), then indexes with `POST /api/storedfile/register-replicas`.
 
 ## Detailed Flow: How Followers Access Posts
 

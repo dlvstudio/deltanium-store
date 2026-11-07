@@ -24,12 +24,17 @@ namespace DeltaniumStore.Services
         private readonly HttpClient _httpClient;
         private readonly string _centralApiUrl;
         private readonly int _timeoutSeconds;
+        private readonly string? _internalApiToken;
 
         public CentralApiService(HttpClient httpClient, IConfiguration configuration)
         {
             _httpClient = httpClient;
             _centralApiUrl = configuration["CentralApi:BaseUrl"] ?? "http://localhost:5002";
             _timeoutSeconds = configuration.GetValue<int>("CentralApi:Timeout", 30);
+            _internalApiToken =
+                Environment.GetEnvironmentVariable("INTERNAL_API_TOKEN")
+                ?? configuration["InternalApi:Token"]
+                ?? configuration["CentralApi:InternalToken"];
             
             // Configure HttpClient timeout
             _httpClient.Timeout = TimeSpan.FromSeconds(_timeoutSeconds);
@@ -130,8 +135,14 @@ namespace DeltaniumStore.Services
             {
                 var url = $"{_centralApiUrl}/api/policy/validate-token";
                 var payload = new Dictionary<string, string> { { "token", token } };
-                var content = new StringContent(JsonSerializer.Serialize(payload), System.Text.Encoding.UTF8, "application/json");
-                var resp = await _httpClient.PostAsync(url, content);
+                using var request = new HttpRequestMessage(HttpMethod.Post, url)
+                {
+                    Content = new StringContent(JsonSerializer.Serialize(payload), System.Text.Encoding.UTF8, "application/json")
+                };
+                if (!string.IsNullOrWhiteSpace(_internalApiToken))
+                    request.Headers.TryAddWithoutValidation("X-Internal-Token", _internalApiToken);
+
+                var resp = await _httpClient.SendAsync(request);
                 if (!resp.IsSuccessStatusCode) return null;
                 var json = await resp.Content.ReadAsStringAsync();
                 var doc = JsonSerializer.Deserialize<JsonElement>(json);

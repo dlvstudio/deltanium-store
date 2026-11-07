@@ -1,17 +1,17 @@
-# Unit Test Plan for deltanium-store
+# Unit Test Plan cho deltanium-store
 
-## Overview
+## Tổng quan
 
-This plan describes in detail the unit tests that should be written for the `deltanium-store` project, a Content Store Node in the Deltanium blockchain system.
+Kế hoạch này mô tả chi tiết các unit tests cần được viết cho project `deltanium-store`, một Content Store Node trong hệ thống Deltanium blockchain.
 
-## Goals
+## Mục tiêu
 
-- Ensure all services and controllers work correctly
-- Achieve at least 70% coverage for critical services
-- Catch bugs early during development
-- Produce documentation through tests
+- Đảm bảo tất cả services và controllers hoạt động đúng
+- Đạt coverage tối thiểu 70% cho các services quan trọng
+- Phát hiện bugs sớm trong quá trình development
+- Tạo documentation thông qua tests
 
-## Test Project Structure
+## Cấu trúc Test Project
 
 ```
 deltanium-store.Tests/
@@ -347,27 +347,27 @@ deltanium-store.Tests/
 
 ### 3.1 TestDataBuilder
 
-Helper methods are needed to generate test data:
+Cần tạo helper methods để generate test data:
 
-- `CreateFileMetadata()` - Create FileMetadata with options
-- `CreateBlockMetadata()` - Create BlockMetadata
-- `CreateCompressedPublicKey()` - Create compressed public key
-- `CreateUncompressedPublicKey()` - Create uncompressed public key
-- `CreateInvalidPublicKey()` - Create invalid public key
-- `CreateMemoryStream()` - Create test stream with data
+- `CreateFileMetadata()` - Tạo FileMetadata với các options
+- `CreateBlockMetadata()` - Tạo BlockMetadata
+- `CreateCompressedPublicKey()` - Tạo compressed public key
+- `CreateUncompressedPublicKey()` - Tạo uncompressed public key
+- `CreateInvalidPublicKey()` - Tạo invalid public key
+- `CreateMemoryStream()` - Tạo test stream với data
 
 ### 3.2 TestFileHelper
 
-Helpers are needed to manage temporary files:
+Cần helper để quản lý temporary files:
 
-- `CreateTempDirectory()` - Create temp directory
-- `CleanupTempFiles()` - Cleanup after tests
-- `CreateTestMetadataFile()` - Create test metadata file
-- `CreateTestBlockFile()` - Create test block file
+- `CreateTempDirectory()` - Tạo temp directory
+- `CleanupTempFiles()` - Cleanup sau tests
+- `CreateTestMetadataFile()` - Tạo test metadata file
+- `CreateTestBlockFile()` - Tạo test block file
 
 ## 4. Dependencies
 
-### NuGet packages to add:
+### NuGet Packages cần thêm:
 
 - `xunit` - Test framework
 - `xunit.runner.visualstudio` - Test runner
@@ -382,9 +382,9 @@ Helpers are needed to manage temporary files:
 ## 5. Test Execution Strategy
 
 ### Phase 1: Services Tests (Priority: HIGH)
-1. PublicKeyUtilsTests - Utility class, easy to test
-2. FileStorageServiceTests - Core service, substantial logic
-3. CentralApiServiceTests - External dependency, requires mocking
+1. PublicKeyUtilsTests - Utility class, dễ test
+2. FileStorageServiceTests - Core service, nhiều logic
+3. CentralApiServiceTests - External dependency, cần mocking
 
 ### Phase 2: Controllers Tests (Priority: MEDIUM)
 1. FileControllerTests - Core file operations
@@ -399,18 +399,18 @@ Helpers are needed to manage temporary files:
 
 - **FileStorageService**: 80%+ line coverage
 - **PublicKeyUtils**: 100% line coverage
-- **CentralApiService**: 70%+ line coverage (with mocking)
+- **CentralApiService**: 70%+ line coverage (với mocking)
 - **FileController**: 70%+ line coverage
 - **PostController**: 60%+ line coverage
 
 ## 7. Notes
 
-- Use Moq to mock `ICentralApiService` and `IFileStorageService`
-- Use `TestFileHelper` to manage temporary storage directories
-- Tests must clean up after running to avoid conflicts
-- Test both compressed and uncompressed public keys
-- Test zero-knowledge sharing scenarios
-- Test PRE (Proxy Re-Encryption) flows
+- Sử dụng Moq để mock `ICentralApiService` và `IFileStorageService`
+- Sử dụng `TestFileHelper` để quản lý temporary storage directories
+- Tests cần cleanup sau khi chạy để tránh conflicts
+- Cần test cả compressed và uncompressed public keys
+- Cần test zero-knowledge sharing scenarios
+- Cần test PRE (Proxy Re-Encryption) flows
 
 ## 8. Estimated Test Count
 
@@ -420,11 +420,19 @@ Helpers are needed to manage temporary files:
 
 ## 9. Next Steps
 
-1. Create test project structure
-2. Setup dependencies and configuration
-3. Implement TestDataBuilder and TestFileHelper
+1. Tạo test project structure
+2. Setup dependencies và configuration
+3. Implement TestDataBuilder và TestFileHelper
 4. Implement Services tests (Phase 1)
 5. Implement Controllers tests (Phase 2)
-6. Run tests and check coverage
-7. Fix bugs and improve coverage
+6. Run tests và check coverage
+7. Fix bugs và improve coverage
 8. Add integration tests (Phase 3)
+
+
+
+
+
+
+
+

@@ -1,11 +1,11 @@
 bin/
 obj/
 logs/
+TestResults/
+.DS_Store
 FileStorage/
 uploads/
-TestResults/
-
-# Generated at first registration — contains mnemonic + private key
+appsettings.Development.json
+appsettings.Local.json
+*.local.json
 node_info.json
-
-.DS_Store

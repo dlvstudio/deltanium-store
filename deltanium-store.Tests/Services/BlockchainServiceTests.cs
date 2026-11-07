@@ -22,7 +22,7 @@ public class BlockchainServiceTests
         var client = new HttpClient(handler) { BaseAddress = new System.Uri("http://localhost:5003") };
         var config = new Mock<IConfiguration>();
         config.Setup(c => c["Blockchain:BlockerApi"]).Returns("http://localhost:5003");
-        config.Setup(c => c["Store:NodePublicKey"]).Returns("0279be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798");
+        config.Setup(c => c["Store:NodePublicKey"]).Returns("03699b56070f41068ca1166169547a4bd05022c41e184069352163dfe21553a14c");
         var logger = new Mock<ILogger<BlockchainService>>();
         var service = new BlockchainService(client, config.Object, logger.Object);
         return (service, handler);

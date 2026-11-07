@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Text.Json;
 using System.Threading.Tasks;
+using DeltaniumStore.Data;
 using DeltaniumStore.Models;
 using Serilog;
 
@@ -51,11 +52,18 @@ namespace DeltaniumStore.Services
     public class StorageContractService : IStorageContractService
     {
         private readonly string _contractStoragePath;
+        private readonly IContractStore _contractStore;
         private Dictionary<string, StorageContract> _contractCache;
 
         public StorageContractService(string storagePath)
+            : this(storagePath, new JsonContractStore(storagePath))
+        {
+        }
+
+        public StorageContractService(string storagePath, IContractStore contractStore)
         {
             _contractStoragePath = Path.Combine(storagePath, "contracts");
+            _contractStore = contractStore;
             _contractCache = new Dictionary<string, StorageContract>();
             
             Directory.CreateDirectory(_contractStoragePath);
@@ -82,28 +90,13 @@ namespace DeltaniumStore.Services
         {
             if (_contractCache.TryGetValue(contractId, out var contract))
             {
-                return contract;
+                return await Task.FromResult(contract);
             }
 
-            // Try to load from disk
-            var filePath = Path.Combine(_contractStoragePath, $"{contractId}.json");
-            if (File.Exists(filePath))
+            LoadContracts();
+            if (_contractCache.TryGetValue(contractId, out contract))
             {
-                try
-                {
-                    var json = await File.ReadAllTextAsync(filePath);
-                    var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                    var loaded = JsonSerializer.Deserialize<StorageContract>(json, options);
-                    if (loaded != null)
-                    {
-                        _contractCache[contractId] = loaded;
-                        return loaded;
-                    }
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine($"[StorageContractService] Error loading contract {contractId}: {ex.Message}");
-                }
+                return contract;
             }
 
             return null;
@@ -187,10 +180,8 @@ namespace DeltaniumStore.Services
         {
             try
             {
-                var filePath = Path.Combine(_contractStoragePath, $"{contract.ContractId}.json");
-                var options = new JsonSerializerOptions { WriteIndented = true };
-                var json = JsonSerializer.Serialize(contract, options);
-                await File.WriteAllTextAsync(filePath, json);
+                _contractStore.Upsert(contract);
+                await Task.CompletedTask;
             }
             catch (Exception ex)
             {
@@ -202,32 +193,13 @@ namespace DeltaniumStore.Services
         {
             try
             {
-                if (!Directory.Exists(_contractStoragePath))
-                    return;
-
-                foreach (var file in Directory.GetFiles(_contractStoragePath, "*.json"))
-                {
-                    try
-                    {
-                        var json = File.ReadAllText(file);
-                        var options = new JsonSerializerOptions { PropertyNameCaseInsensitive = true };
-                        var contract = JsonSerializer.Deserialize<StorageContract>(json, options);
-                        if (contract != null)
-                        {
-                            _contractCache[contract.ContractId] = contract;
-                        }
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[StorageContractService] Error loading contract file {file}: {ex.Message}");
-                    }
-                }
-
+                _contractCache = _contractStore.LoadAll();
                 Console.WriteLine($"[StorageContractService] Loaded {_contractCache.Count} contracts");
             }
             catch (Exception ex)
             {
                 Console.WriteLine($"[StorageContractService] Error loading contracts: {ex.Message}");
+                _contractCache = new Dictionary<string, StorageContract>();
             }
         }
     }

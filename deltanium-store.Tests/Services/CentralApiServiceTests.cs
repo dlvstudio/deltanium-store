@@ -31,6 +31,7 @@ namespace deltanium_store.Tests.Services
             
             // Setup default configuration
             _mockConfig.Setup(c => c["CentralApi:BaseUrl"]).Returns("http://localhost:5002");
+            _mockConfig.Setup(c => c["InternalApi:Token"]).Returns("test-internal-token");
             _mockConfigSection.Setup(c => c.Value).Returns("30");
             _mockConfig.Setup(c => c.GetSection("CentralApi:Timeout")).Returns(_mockConfigSection.Object);
             
@@ -235,8 +236,10 @@ namespace deltanium_store.Tests.Services
                 .Protected()
                 .Setup<Task<HttpResponseMessage>>(
                     "SendAsync",
-                    ItExpr.Is<HttpRequestMessage>(req => 
-                        req.RequestUri.ToString().Contains("/api/policy/validate-token")),
+                    ItExpr.Is<HttpRequestMessage>(req =>
+                        req.RequestUri!.ToString().Contains("/api/policy/validate-token") &&
+                        req.Headers.Contains("X-Internal-Token") &&
+                        req.Headers.GetValues("X-Internal-Token").Contains("test-internal-token")),
                     ItExpr.IsAny<CancellationToken>())
                 .ReturnsAsync(response);
 

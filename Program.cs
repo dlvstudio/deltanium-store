@@ -1,4 +1,6 @@
 using Microsoft.OpenApi.Models;
+using Microsoft.EntityFrameworkCore;
+using DeltaniumStore.Data;
 using DeltaniumStore.Services;
 using DeltaniumStore.Middleware;
 using System.Reflection;
@@ -127,10 +129,41 @@ builder.Services.AddSwaggerGen(c =>
     c.IncludeXmlComments(xmlPath);
 });
 
-// Configure file storage service
+// Configure file storage service (JSON or MySQL metadata; encrypted blocks stay on disk)
 var storageBasePath = Path.Combine(Directory.GetCurrentDirectory(), "FileStorage");
-builder.Services.AddSingleton<IFileStorageService>(new FileStorageService(storageBasePath));
-builder.Services.AddSingleton<IStorageContractService>(new StorageContractService(storageBasePath));
+var storageProvider = builder.Configuration["Storage:Provider"] ?? "Json";
+var connectionString = builder.Configuration.GetConnectionString("Default");
+
+if (string.Equals(storageProvider, "MySql", StringComparison.OrdinalIgnoreCase))
+{
+    if (string.IsNullOrWhiteSpace(connectionString))
+    {
+        throw new InvalidOperationException(
+            "MySQL enabled but ConnectionStrings:Default is empty. " +
+            "Set via User Secrets (id: deltanium-store-local-secrets).");
+    }
+
+    var serverVersion = new MySqlServerVersion(new Version(8, 4, 0));
+    builder.Services.AddDbContextFactory<StoreDbContext>(options =>
+        options.UseMySql(connectionString, serverVersion));
+    builder.Services.AddSingleton<IFileMetadataStore, MySqlFileMetadataStore>();
+    builder.Services.AddSingleton<IBlockMetadataStore, MySqlBlockMetadataStore>();
+    builder.Services.AddSingleton<IContractStore, MySqlContractStore>();
+}
+else
+{
+    builder.Services.AddSingleton<IFileMetadataStore>(_ => new JsonFileMetadataStore(storageBasePath));
+    builder.Services.AddSingleton<IBlockMetadataStore>(_ => new JsonBlockMetadataStore(storageBasePath));
+    builder.Services.AddSingleton<IContractStore>(_ => new JsonContractStore(storageBasePath));
+}
+
+builder.Services.AddSingleton<IFileStorageService>(sp =>
+    new FileStorageService(
+        storageBasePath,
+        sp.GetRequiredService<IFileMetadataStore>(),
+        sp.GetRequiredService<IBlockMetadataStore>()));
+builder.Services.AddSingleton<IStorageContractService>(sp =>
+    new StorageContractService(storageBasePath, sp.GetRequiredService<IContractStore>()));
 
 // Configure blockchain client for store submissions
 builder.Services.AddHttpClient<IBlockchainService, BlockchainService>();
@@ -139,6 +172,19 @@ builder.Services.AddHttpClient<IBlockchainService, BlockchainService>();
 builder.Services.AddHttpClient<ICentralApiService, CentralApiService>();
 
 var app = builder.Build();
+
+if (string.Equals(storageProvider, "MySql", StringComparison.OrdinalIgnoreCase))
+{
+    using var scope = app.Services.CreateScope();
+    var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<StoreDbContext>>();
+    using var db = factory.CreateDbContext();
+    db.Database.EnsureCreated();
+    Log.Information("Store Storage:Provider=MySql schema ensured");
+}
+else
+{
+    Log.Information("Store Storage:Provider=Json");
+}
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
@@ -188,10 +234,18 @@ app.MapGet("/weatherforecast", () =>
 var nodeRegConfig = builder.Configuration.GetSection("NodeRegistration");
 string apiUrl = nodeRegConfig["ApiUrl"] ?? "http://localhost:5002";
 string nodeEndpoint = nodeRegConfig["Endpoint"] ?? "http://localhost:5000";
-string voucher = nodeRegConfig["Voucher"] ?? "00000000-0000-0000-0000-000000000001";
-
-var regService = new NodeRegistrationService(apiUrl, nodeEndpoint, voucher);
-await regService.RegisterNodeIfNeededAsync();
+string? voucher = Environment.GetEnvironmentVariable("STORE_VOUCHER");
+if (string.IsNullOrWhiteSpace(voucher))
+    voucher = nodeRegConfig["Voucher"];
+if (string.IsNullOrWhiteSpace(voucher))
+{
+    Console.WriteLine("[WARN] STORE_VOUCHER / NodeRegistration:Voucher not set — skipping node registration");
+}
+else
+{
+    var regService = new NodeRegistrationService(apiUrl, nodeEndpoint, voucher);
+    await regService.RegisterNodeIfNeededAsync();
+}
 
 app.Run();
 
