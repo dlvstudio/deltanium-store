@@ -3,11 +3,16 @@ using Microsoft.EntityFrameworkCore;
 using DeltaniumStore.Data;
 using DeltaniumStore.Services;
 using DeltaniumStore.Middleware;
+using DeltaniumStore.Security;
 using System.Reflection;
 using System.Threading.Tasks;
 using Serilog;
 
+// Decrypt dpapi:* Machine/AppPool env vars before host/config bind (IIS production).
+DpapiEnvironment.ExpandProcessEnvironment();
+
 var builder = WebApplication.CreateBuilder(args);
+builder.Configuration.AddDpapiDecryptedOverrides();
 
 // Serilog configuration with daily rolling files
 var logsDir = Path.Combine(Directory.GetCurrentDirectory(), "logs");
