@@ -2,6 +2,17 @@
 
 A secure file storage node that stores encrypted posts/files and exposes APIs for metadata and block uploads, as well as follower feeds. Integrates with the central API for store discovery and following relationships.
 
+## Production
+
+| | URL |
+|--|-----|
+| **Store node 1** | [https://store-1.deltanium.com](https://store-1.deltanium.com) |
+| **Store node 2** | [https://store-2.deltanium.com](https://store-2.deltanium.com) |
+| Central API | [https://api.deltanium.com](https://api.deltanium.com) |
+| App | [https://app.deltanium.com](https://app.deltanium.com) |
+
+Local default: `http://127.0.0.1:5001`. Nodes are discovered by the app via `GET /api/storenode/list` on the Central API.
+
 ## Features
 
 - Secure file upload with cryptographic signature verification
