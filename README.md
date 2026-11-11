@@ -348,3 +348,7 @@ Enable Debug level logging in appsettings.json for more detailed logs:
   }
 }
 ```
+
+## License
+
+MIT — see [LICENSE](LICENSE).
