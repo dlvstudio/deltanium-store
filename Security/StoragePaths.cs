@@ -28,5 +28,13 @@ namespace DeltaniumStore.Security
 
             return Path.Combine(contentRoot, "FileStorage");
         }
+
+        /// <summary>True when <paramref name="basePath"/> is not inside <paramref name="contentRoot"/>.</summary>
+        public static bool IsOutside(string basePath, string contentRoot)
+        {
+            var root = Path.GetFullPath(contentRoot).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            var full = Path.GetFullPath(basePath).TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar) + Path.DirectorySeparatorChar;
+            return !full.StartsWith(root, OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal);
+        }
     }
 }

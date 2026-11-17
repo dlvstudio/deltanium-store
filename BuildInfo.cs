@@ -15,6 +15,9 @@ namespace DeltaniumStore
 
         public static readonly DateTime StartedAtUtc = DateTime.UtcNow;
 
+        /// <summary>True when blocks are stored outside the site folder, so a deploy cannot delete them (set at startup).</summary>
+        public static bool? StorageOutsideSite { get; set; }
+
         public static string Informational =>
             Asm.GetCustomAttribute<AssemblyInformationalVersionAttribute>()?.InformationalVersion
             ?? Asm.GetName().Version?.ToString() ?? "0.0.0";
@@ -43,6 +46,7 @@ namespace DeltaniumStore
             startedAtUtc = StartedAtUtc,
             uptimeSeconds = (long)(DateTime.UtcNow - StartedAtUtc).TotalSeconds,
             network = NetworkScope.Name,
+            storageOutsideSite = StorageOutsideSite,
             runtime = Environment.Version.ToString()
         };
 

@@ -31,4 +31,12 @@ public class StoragePathsTests
         var p = StoragePaths.ResolveBasePath("", "/dev/store", "/nowhere-" + Guid.NewGuid().ToString("N"));
         Assert.Equal(Path.Combine("/dev/store", "FileStorage"), p);
     }
+
+    [Fact]
+    public void Outside_check_detects_paths_inside_the_site()
+    {
+        Assert.False(StoragePaths.IsOutside("/sites/store/FileStorage", "/sites/store"));
+        Assert.True(StoragePaths.IsOutside("/data/store/FileStorage", "/sites/store"));
+        Assert.True(StoragePaths.IsOutside("/sites/store-2/FileStorage", "/sites/store"));
+    }
 }

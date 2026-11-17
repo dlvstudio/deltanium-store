@@ -145,7 +145,10 @@ builder.Services.AddSwaggerGen(c =>
 // Outside the IIS site folder in production: MSDeploy sync deletes whatever is not in the package.
 var storageBasePath = DeltaniumStore.Security.StoragePaths.ResolveBasePath(
     builder.Configuration["Storage:BasePath"], Directory.GetCurrentDirectory());
-Log.Information("Store block storage at {StorageBasePath}", storageBasePath);
+DeltaniumStore.BuildInfo.StorageOutsideSite =
+    DeltaniumStore.Security.StoragePaths.IsOutside(storageBasePath, Directory.GetCurrentDirectory());
+Log.Information("Store block storage at {StorageBasePath} (outside site: {Outside})",
+    storageBasePath, DeltaniumStore.BuildInfo.StorageOutsideSite);
 var storageProvider = builder.Configuration["Storage:Provider"] ?? "Json";
 var connectionString = builder.Configuration.GetConnectionString("Default");
 
