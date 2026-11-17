@@ -22,8 +22,7 @@ namespace DeltaniumStore.Security
     /// message is accepted once.
     ///
     /// Central public key: env CENTRAL_PUBLIC_KEY (or CentralApi:PublicKey), else fetched once over HTTPS from
-    /// {CentralApi:BaseUrl}/api/blockcreatornode/decision-key. The old token is accepted only while
-    /// InternalApi:AcceptLegacyToken=true.
+    /// {CentralApi:BaseUrl}/api/blockcreatornode/decision-key. The old shared token is no longer accepted.
     /// </summary>
     public static class CentralRequestAuth
     {
@@ -55,20 +54,7 @@ namespace DeltaniumStore.Security
                 if (ok) { ctx.Items[ItemKey] = true; return (true, ""); }
                 return (false, err);
             }
-            if (string.Equals(config["InternalApi:AcceptLegacyToken"], "true", StringComparison.OrdinalIgnoreCase) && LegacyTokenMatches(req, config))
-            {
-                ctx.Items[ItemKey] = true;
-                return (true, "");
-            }
             return (false, "Central signature required");
-        }
-
-        private static bool LegacyTokenMatches(HttpRequest request, IConfiguration config)
-        {
-            var expected = config["InternalApi:Token"] ?? Environment.GetEnvironmentVariable("INTERNAL_API_TOKEN");
-            if (string.IsNullOrWhiteSpace(expected)) return false;
-            return request.Headers.TryGetValue("X-Internal-Token", out var got) &&
-                   CryptographicOperations.FixedTimeEquals(Encoding.UTF8.GetBytes(got.ToString()), Encoding.UTF8.GetBytes(expected));
         }
 
         private static async Task<(bool Ok, string Error)> VerifySignatureAsync(HttpContext ctx, string signature, string timestamp,

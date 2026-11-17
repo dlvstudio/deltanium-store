@@ -15,11 +15,6 @@ DpapiEnvironment.ExpandProcessEnvironment();
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddDpapiDecryptedOverrides();
-// appsettings ships InternalApi:Token as "" (not null), so `config[...] ?? env` never reached the env var.
-// Same as Central: a non-empty INTERNAL_API_TOKEN (ProgramData DPAPI env) wins.
-var envInternalToken = Environment.GetEnvironmentVariable("INTERNAL_API_TOKEN");
-if (!string.IsNullOrWhiteSpace(envInternalToken))
-    builder.Configuration["InternalApi:Token"] = envInternalToken.Trim();
 
 // Serilog configuration with daily rolling files
 var logsDir = Path.Combine(Directory.GetCurrentDirectory(), "logs");

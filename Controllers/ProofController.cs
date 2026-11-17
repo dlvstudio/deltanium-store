@@ -14,7 +14,7 @@ namespace DeltaniumStore.Controllers
 {
     /// <summary>
     /// Central-only endpoints for TOKENOMICS_V2: proof-of-storage challenges (§6) and egress reports (§7).
-    /// Authenticated by X-Internal-Token (shared INTERNAL_API_TOKEN), not user signatures.
+    /// Authenticated by Central's signature (CentralRequestAuth), not user signatures.
     /// </summary>
     [ApiController]
     [Route("api/proof")]

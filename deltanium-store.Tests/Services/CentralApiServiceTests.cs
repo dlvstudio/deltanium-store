@@ -21,6 +21,7 @@ namespace deltanium_store.Tests.Services
         private readonly Mock<Microsoft.Extensions.Configuration.IConfiguration> _mockConfig;
         private readonly Mock<Microsoft.Extensions.Configuration.IConfigurationSection> _mockConfigSection;
         private readonly CentralApiService _service;
+        private readonly NBitcoin.Key _nodeKey = new NBitcoin.Key();
 
         public CentralApiServiceTests()
         {
@@ -31,11 +32,10 @@ namespace deltanium_store.Tests.Services
             
             // Setup default configuration
             _mockConfig.Setup(c => c["CentralApi:BaseUrl"]).Returns("http://localhost:5002");
-            _mockConfig.Setup(c => c["InternalApi:Token"]).Returns("test-internal-token");
             _mockConfigSection.Setup(c => c.Value).Returns("30");
             _mockConfig.Setup(c => c.GetSection("CentralApi:Timeout")).Returns(_mockConfigSection.Object);
             
-            _service = new CentralApiService(_httpClient, _mockConfig.Object);
+            _service = new CentralApiService(_httpClient, _mockConfig.Object, () => _nodeKey);
         }
 
         [Fact]
@@ -238,8 +238,9 @@ namespace deltanium_store.Tests.Services
                     "SendAsync",
                     ItExpr.Is<HttpRequestMessage>(req =>
                         req.RequestUri!.ToString().Contains("/api/policy/validate-token") &&
-                        req.Headers.Contains("X-Internal-Token") &&
-                        req.Headers.GetValues("X-Internal-Token").Contains("test-internal-token")),
+                        !req.Headers.Contains("X-Internal-Token") &&
+                        req.Headers.Contains("X-Signature") && req.Headers.Contains("X-Timestamp") &&
+                        req.Headers.GetValues("X-User-PubKey").Contains(_nodeKey.PubKey.ToHex())),
                     ItExpr.IsAny<CancellationToken>())
                 .ReturnsAsync(response);
 
@@ -318,6 +319,33 @@ namespace deltanium_store.Tests.Services
             // Assert
             result.Should().BeNull();
         }
+
+        [Fact]
+        public async Task ValidatePreTokenAsync_signs_with_the_node_key_in_Centrals_format()
+        {
+            HttpRequestMessage? sent = null;
+            string? sentBody = null;
+            _mockHttpHandler.Protected()
+                .Setup<Task<HttpResponseMessage>>("SendAsync", ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>())
+                .Callback<HttpRequestMessage, CancellationToken>((r, _) => { sent = r; sentBody = r.Content!.ReadAsStringAsync().Result; })
+                .ReturnsAsync(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent("{\"rk\":\"cms=\"}") });
+
+            (await _service.ValidatePreTokenAsync("tok.sig")).Should().Be("cms=");
+
+            var ts = sent!.Headers.GetValues("X-Timestamp").Single();
+            var bodyHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(sentBody!))).ToLowerInvariant();
+            var message = DeltaniumStore.NetworkScope.Scope("POST/api/policy/validate-token" + ts + bodyHash);
+            var hash = new NBitcoin.uint256(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(message)));
+            var sig = NBitcoin.Crypto.ECDSASignature.FromDER(Convert.FromBase64String(sent.Headers.GetValues("X-Signature").Single()));
+            _nodeKey.PubKey.Verify(hash, sig).Should().BeTrue();
+        }
+
+        [Fact]
+        public async Task ValidatePreTokenAsync_without_a_node_key_does_not_call_Central()
+        {
+            var service = new CentralApiService(_httpClient, _mockConfig.Object, () => null);
+            (await service.ValidatePreTokenAsync("tok.sig")).Should().BeNull();
+            _mockHttpHandler.Protected().Verify("SendAsync", Times.Never(), ItExpr.IsAny<HttpRequestMessage>(), ItExpr.IsAny<CancellationToken>());
+        }
     }
 }
-

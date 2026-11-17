@@ -5,6 +5,8 @@ using System.Threading.Tasks;
 using System.Text.Json;
 using System.Linq;
 using Microsoft.Extensions.Configuration;
+using DeltaniumStore.Security;
+using NBitcoin;
 
 namespace DeltaniumStore.Services
 {
@@ -24,17 +26,23 @@ namespace DeltaniumStore.Services
         private readonly HttpClient _httpClient;
         private readonly string _centralApiUrl;
         private readonly int _timeoutSeconds;
-        private readonly string? _internalApiToken;
+        private readonly Func<Key?> _nodeKey;
 
+        private static readonly Lazy<Key?> CachedNodeKey = new(() => NodeKey.Load());
+
+        public CentralApiService(HttpClient httpClient, IConfiguration configuration, Func<Key?>? nodeKey = null)
+            : this(httpClient, configuration)
+        {
+            if (nodeKey != null) _nodeKey = nodeKey;
+        }
+
+        [Microsoft.Extensions.DependencyInjection.ActivatorUtilitiesConstructor]
         public CentralApiService(HttpClient httpClient, IConfiguration configuration)
         {
             _httpClient = httpClient;
             _centralApiUrl = configuration["CentralApi:BaseUrl"] ?? "http://localhost:5002";
             _timeoutSeconds = configuration.GetValue<int>("CentralApi:Timeout", 30);
-            _internalApiToken =
-                Environment.GetEnvironmentVariable("INTERNAL_API_TOKEN")
-                ?? configuration["InternalApi:Token"]
-                ?? configuration["CentralApi:InternalToken"];
+            _nodeKey = () => CachedNodeKey.Value;
             
             // Configure HttpClient timeout
             _httpClient.Timeout = TimeSpan.FromSeconds(_timeoutSeconds);
@@ -127,6 +135,21 @@ namespace DeltaniumStore.Services
         }
 
         /// <summary>
+        /// X-User-PubKey / X-Timestamp / X-Signature over METHOD + path+query + timestamp + sha256hex(body),
+        /// network-scoped: the format Central's SignatureAuthHelper verifies.
+        /// </summary>
+        public static void SignAsNode(HttpRequestMessage request, string body, Key key, DateTimeOffset? now = null)
+        {
+            var ts = (now ?? DateTimeOffset.UtcNow).ToUnixTimeSeconds().ToString();
+            var bodyHash = Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(body))).ToLowerInvariant();
+            var message = NetworkScope.Scope(request.Method.Method.ToUpperInvariant() + request.RequestUri!.PathAndQuery + ts + bodyHash);
+            var sig = key.Sign(new uint256(System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(message))));
+            request.Headers.TryAddWithoutValidation("X-User-PubKey", key.PubKey.ToHex());
+            request.Headers.TryAddWithoutValidation("X-Timestamp", ts);
+            request.Headers.TryAddWithoutValidation("X-Signature", Convert.ToBase64String(sig.ToDER()));
+        }
+
+        /// <summary>
         /// Validate PRE token and return rk (base64) if authorized.
         /// </summary>
         public async Task<string?> ValidatePreTokenAsync(string token)
@@ -134,13 +157,19 @@ namespace DeltaniumStore.Services
             try
             {
                 var url = $"{_centralApiUrl}/api/policy/validate-token";
-                var payload = new Dictionary<string, string> { { "token", token } };
+                var body = JsonSerializer.Serialize(new Dictionary<string, string> { { "token", token } });
                 using var request = new HttpRequestMessage(HttpMethod.Post, url)
                 {
-                    Content = new StringContent(JsonSerializer.Serialize(payload), System.Text.Encoding.UTF8, "application/json")
+                    Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json")
                 };
-                if (!string.IsNullOrWhiteSpace(_internalApiToken))
-                    request.Headers.TryAddWithoutValidation("X-Internal-Token", _internalApiToken);
+                // Central only lets an active registered Store redeem PRE tokens: sign with this node's key.
+                var key = _nodeKey();
+                if (key == null)
+                {
+                    Console.WriteLine("[CentralApiService] ValidatePreToken: no node key configured");
+                    return null;
+                }
+                SignAsNode(request, body, key);
 
                 var resp = await _httpClient.SendAsync(request);
                 if (!resp.IsSuccessStatusCode) return null;

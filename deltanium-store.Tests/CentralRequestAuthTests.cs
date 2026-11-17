@@ -76,7 +76,7 @@ namespace DeltaniumStore.Tests
         }
 
         [Fact]
-        public async Task Shared_token_is_refused_unless_the_legacy_switch_is_on()
+        public async Task Shared_token_is_always_refused()
         {
             DefaultHttpContext TokenRequest()
             {
@@ -88,7 +88,7 @@ namespace DeltaniumStore.Tests
             }
             (await CentralRequestAuth.AuthenticateAsync(TokenRequest(), Config(new() { ["InternalApi:Token"] = "tok" }), null)).Ok.Should().BeFalse();
             (await CentralRequestAuth.AuthenticateAsync(TokenRequest(),
-                Config(new() { ["InternalApi:Token"] = "tok", ["InternalApi:AcceptLegacyToken"] = "true" }), null)).Ok.Should().BeTrue();
+                Config(new() { ["InternalApi:Token"] = "tok", ["InternalApi:AcceptLegacyToken"] = "true" }), null)).Ok.Should().BeFalse();
         }
     }
 }
