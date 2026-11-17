@@ -151,6 +151,7 @@ Log.Information("Store block storage at {StorageBasePath} (outside site: {Outsid
     storageBasePath, DeltaniumStore.BuildInfo.StorageOutsideSite);
 var storageProvider = builder.Configuration["Storage:Provider"] ?? "Json";
 var connectionString = builder.Configuration.GetConnectionString("Default");
+var metadataTablePrefix = StoreDbContext.ValidatePrefix(builder.Configuration["Storage:MetadataTablePrefix"]);
 
 if (string.Equals(storageProvider, "MySql", StringComparison.OrdinalIgnoreCase))
 {
@@ -162,8 +163,12 @@ if (string.Equals(storageProvider, "MySql", StringComparison.OrdinalIgnoreCase))
     }
 
     var serverVersion = new MySqlServerVersion(new Version(8, 4, 0));
-    builder.Services.AddDbContextFactory<StoreDbContext>(options =>
-        options.UseMySql(connectionString, serverVersion));
+    // Several Stores may share one MySQL database: each must use its own table prefix (Storage:MetadataTablePrefix),
+    // otherwise one Store's maintenance (prune) edits the other Store's metadata.
+    var dbOptions = new DbContextOptionsBuilder<StoreDbContext>().UseMySql(connectionString, serverVersion).Options;
+    builder.Services.AddSingleton(dbOptions);
+    builder.Services.AddSingleton<IDbContextFactory<StoreDbContext>>(
+        new PrefixedStoreDbContextFactory(dbOptions, metadataTablePrefix));
     builder.Services.AddSingleton<IFileMetadataStore, MySqlFileMetadataStore>();
     builder.Services.AddSingleton<IBlockMetadataStore, MySqlBlockMetadataStore>();
     builder.Services.AddSingleton<IContractStore, MySqlContractStore>();
@@ -236,6 +241,44 @@ builder.Services.AddCors(options =>
 
 var app = builder.Build();
 
+// Schema (and the one-off move to per-Store tables) before anything loads metadata into memory.
+if (string.Equals(storageProvider, "MySql", StringComparison.OrdinalIgnoreCase))
+{
+    using var scope = app.Services.CreateScope();
+    var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<StoreDbContext>>();
+    using (var db = factory.CreateDbContext())
+        StoreSchema.EnsureTables(db);
+    Log.Information("Store Storage:Provider=MySql schema ensured (table prefix '{Prefix}')", metadataTablePrefix);
+    if (metadataTablePrefix.Length == 0)
+        Log.Warning("Storage:MetadataTablePrefix is not set: if another Store uses this MySQL database, their metadata is shared");
+    else
+    {
+        // One-off: copy this Store's rows out of the formerly shared tables (only blocks it holds on disk).
+        var marker = Path.Combine(storageBasePath, $"metadata-scope-{metadataTablePrefix}.done");
+        if (!File.Exists(marker))
+        {
+            try
+            {
+                var dbOpts = scope.ServiceProvider.GetRequiredService<DbContextOptions<StoreDbContext>>();
+                var legacy = new PrefixedStoreDbContextFactory(dbOpts, "");
+                using (var ldb = legacy.CreateDbContext()) StoreSchema.EnsureTables(ldb);
+                var r = MetadataScopeMigration.CopyLocalRows(
+                    new MySqlFileMetadataStore(legacy), new MySqlBlockMetadataStore(legacy), new MySqlContractStore(legacy),
+                    new MySqlFileMetadataStore(factory), new MySqlBlockMetadataStore(factory), new MySqlContractStore(factory),
+                    Path.Combine(storageBasePath, "block_data"));
+                File.WriteAllText(marker, $"{DateTime.UtcNow:O} files={r.Files} blocks={r.Blocks} contracts={r.Contracts}");
+                Log.Information("Metadata scope '{Prefix}': copied {Files} files, {Blocks} blocks, {Contracts} contracts from the shared tables",
+                    metadataTablePrefix, r.Files, r.Blocks, r.Contracts);
+            }
+            catch (Exception ex) { Log.Error(ex, "Metadata scope copy failed; will retry on next start"); }
+        }
+    }
+}
+else
+{
+    Log.Information("Store Storage:Provider=Json");
+}
+
 // One-off cleanup after the MSDeploy data loss: Storage:PruneLostBeforeUtc=<ISO time> removes (quarantines) metadata
 // entries older than that time whose blocks are gone, so feeds stop listing posts that can no longer be opened.
 if (DateTime.TryParse(builder.Configuration["Storage:PruneLostBeforeUtc"], null,
@@ -268,18 +311,6 @@ var nodeKey = NodeKey.Load();
 Log.Information("Store node key: {Source}", nodeKey == null ? "none (contracts get mock signatures)"
     : !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("NODE_PRIVATE_KEY")) ? "NODE_PRIVATE_KEY (DPAPI env)" : "node_info.json (plaintext; run Move-NodeKeysToDpapi.ps1)");
 
-if (string.Equals(storageProvider, "MySql", StringComparison.OrdinalIgnoreCase))
-{
-    using var scope = app.Services.CreateScope();
-    var factory = scope.ServiceProvider.GetRequiredService<IDbContextFactory<StoreDbContext>>();
-    using var db = factory.CreateDbContext();
-    db.Database.EnsureCreated();
-    Log.Information("Store Storage:Provider=MySql schema ensured");
-}
-else
-{
-    Log.Information("Store Storage:Provider=Json");
-}
 
 // Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
