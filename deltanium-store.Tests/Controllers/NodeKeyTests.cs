@@ -57,4 +57,25 @@ public class NodeKeyTests : IDisposable
         WriteNodeInfo(new Key().PubKey.ToHex(), null);
         NodeKey.Load(_path).Should().BeNull();
     }
+
+    [Fact]
+    public void Public_key_comes_from_the_node_key_not_configuration()
+    {
+        var key = new Key();
+        WriteNodeInfo(key.PubKey.ToHex(), null);
+        Environment.SetEnvironmentVariable("NODE_PRIVATE_KEY", key.ToHex());
+        NodeKey.PublicKeyHex("03699b56070f41068ca1166169547a4bd05022c41e184069352163dfe21553a14c", _path)
+            .Should().Be(key.PubKey.ToHex());
+    }
+
+    [Fact]
+    public void Public_key_falls_back_to_node_info_then_configuration()
+    {
+        var registered = new Key().PubKey.ToHex();
+        WriteNodeInfo(registered, null);
+        NodeKey.PublicKeyHex("cfg", _path).Should().Be(registered);
+        File.Delete(_path);
+        NodeKey.PublicKeyHex("cfg", _path).Should().Be("cfg");
+        NodeKey.PublicKeyHex(null, _path).Should().BeNull();
+    }
 }

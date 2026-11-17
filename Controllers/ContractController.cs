@@ -161,13 +161,12 @@ namespace DeltaniumStore.Controllers
         }
 
         /// <summary>
-        /// Get this Storage Node's public key (from configuration).
+        /// Get this Storage Node's public key: the node key's, else node_info.json, else NodeConfig:PublicKey.
         /// </summary>
         private string GetStorageNodePublicKey()
         {
-            // TODO: Read from configuration or node identity service
             var config = HttpContext.RequestServices.GetService<IConfiguration>();
-            return config?.GetSection("NodeConfig:PublicKey")?.Value ?? "node_public_key";
+            return DeltaniumStore.Security.NodeKey.PublicKeyHex(config?.GetSection("NodeConfig:PublicKey")?.Value) ?? "node_public_key";
         }
 
         /// <summary>

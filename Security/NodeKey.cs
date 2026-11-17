@@ -37,6 +37,27 @@ namespace DeltaniumStore.Security
             return key;
         }
 
+        /// <summary>
+        /// This node's public key: the key's own public key, else the one registered in node_info.json,
+        /// else <paramref name="fallback"/> (configuration). Never a hard-coded default.
+        /// </summary>
+        public static string? PublicKeyHex(string? fallback = null, string nodeInfoPath = NodeInfoPath)
+        {
+            try
+            {
+                var key = Load(nodeInfoPath);
+                if (key != null) return key.PubKey.ToHex();
+                if (File.Exists(nodeInfoPath))
+                {
+                    using var doc = JsonDocument.Parse(File.ReadAllText(nodeInfoPath));
+                    var registered = Prop(doc.RootElement, "publicKey");
+                    if (!string.IsNullOrEmpty(registered)) return registered;
+                }
+            }
+            catch (Exception) { /* fall back to configuration */ }
+            return string.IsNullOrWhiteSpace(fallback) ? null : fallback.Trim();
+        }
+
         private static string? Prop(JsonElement o, string name)
         {
             foreach (var p in o.EnumerateObject())

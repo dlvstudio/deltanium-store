@@ -38,7 +38,9 @@ namespace DeltaniumStore.Services
             _httpClient = httpClient;
             _logger = logger;
             _blockerApiUrl = configuration["Blockchain:BlockerApi"] ?? "http://localhost:5003";
-            _storeNodePublicKey = configuration["Store:NodePublicKey"] ?? "03699b56070f41068ca1166169547a4bd05022c41e184069352163dfe21553a14c";
+            _storeNodePublicKey = DeltaniumStore.Security.NodeKey.PublicKeyHex(configuration["Store:NodePublicKey"]) ?? "";
+            if (string.IsNullOrEmpty(_storeNodePublicKey))
+                _logger.LogWarning("[BlockchainService] No node public key (node key, node_info.json or Store:NodePublicKey).");
             
             _logger.LogInformation($"[BlockchainService] Initialized with BlockerApi: {_blockerApiUrl}");
         }
