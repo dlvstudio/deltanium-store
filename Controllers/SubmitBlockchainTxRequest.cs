@@ -12,6 +12,5 @@ namespace DeltaniumStore.Controllers
         public string? NodeId { get; set; }
         public string? ShareType { get; set; }
         public string? EncryptedType { get; set; }
-        public string? UserMnemonic { get; set; }
     }
 }

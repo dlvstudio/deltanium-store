@@ -1,5 +1,6 @@
 using Microsoft.OpenApi.Models;
 using Microsoft.EntityFrameworkCore;
+using DeltaniumStore;
 using DeltaniumStore.Data;
 using DeltaniumStore.Services;
 using DeltaniumStore.Middleware;
@@ -14,6 +15,11 @@ DpapiEnvironment.ExpandProcessEnvironment();
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Configuration.AddDpapiDecryptedOverrides();
+// appsettings ships InternalApi:Token as "" (not null), so `config[...] ?? env` never reached the env var.
+// Same as Central: a non-empty INTERNAL_API_TOKEN (ProgramData DPAPI env) wins.
+var envInternalToken = Environment.GetEnvironmentVariable("INTERNAL_API_TOKEN");
+if (!string.IsNullOrWhiteSpace(envInternalToken))
+    builder.Configuration["InternalApi:Token"] = envInternalToken.Trim();
 
 // Serilog configuration with daily rolling files
 var logsDir = Path.Combine(Directory.GetCurrentDirectory(), "logs");
@@ -168,6 +174,7 @@ builder.Services.AddSingleton<IFileStorageService>(sp =>
         storageBasePath,
         sp.GetRequiredService<IFileMetadataStore>(),
         sp.GetRequiredService<IBlockMetadataStore>()));
+builder.Services.AddSingleton<IEgressTracker>(_ => new EgressTracker(storageBasePath));
 builder.Services.AddSingleton<IStorageContractService>(sp =>
     new StorageContractService(storageBasePath, sp.GetRequiredService<IContractStore>()));
 
@@ -177,7 +184,56 @@ builder.Services.AddHttpClient<IBlockchainService, BlockchainService>();
 // Configure HTTP client and Central API service
 builder.Services.AddHttpClient<ICentralApiService, CentralApiService>();
 
+// Browser clients (Flutter web) call store nodes directly for upload/download.
+builder.Services.AddCors(options =>
+{
+    options.AddDefaultPolicy(policy =>
+    {
+        var configured = builder.Configuration.GetSection("Cors:AllowedOrigins").Get<string[]>()
+            ?? Array.Empty<string>();
+        var origins = configured
+            .Where(o => !string.IsNullOrWhiteSpace(o))
+            .Select(o => o.Trim().TrimEnd('/'))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        if (origins.Length == 0)
+        {
+            origins = new[]
+            {
+                "https://app.deltanium.com",
+                "https://deltanium.com",
+                "https://www.deltanium.com",
+            };
+        }
+
+        if (builder.Environment.IsDevelopment())
+        {
+            origins = origins
+                .Concat(new[]
+                {
+                    "http://localhost:5000",
+                    "http://127.0.0.1:5000",
+                    "http://localhost:8080",
+                    "http://127.0.0.1:8080",
+                })
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+
+        Log.Information("CORS AllowedOrigins: {Origins}", string.Join(", ", origins));
+        policy.WithOrigins(origins)
+              .AllowAnyMethod()
+              .AllowAnyHeader();
+    });
+});
+
 var app = builder.Build();
+Log.Information("Store {Version} starting on {Network}", BuildInfo.Summary, NetworkScope.Name);
+// Fail fast if NODE_PRIVATE_KEY does not belong to the registered node (never log the key itself).
+var nodeKey = NodeKey.Load();
+Log.Information("Store node key: {Source}", nodeKey == null ? "none (contracts get mock signatures)"
+    : !string.IsNullOrEmpty(Environment.GetEnvironmentVariable("NODE_PRIVATE_KEY")) ? "NODE_PRIVATE_KEY (DPAPI env)" : "node_info.json (plaintext; run Move-NodeKeysToDpapi.ps1)");
 
 if (string.Equals(storageProvider, "MySql", StringComparison.OrdinalIgnoreCase))
 {
@@ -206,7 +262,10 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseCors();
 app.UseAuthorization();
+
+app.MapGet("/api/version", () => Results.Ok(BuildInfo.Describe("store")));
 
 // Add signature verification middleware
 app.UseSignatureVerification();

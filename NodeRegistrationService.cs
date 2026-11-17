@@ -25,10 +25,21 @@ public class NodeRegistrationService
         if (File.Exists(_nodeInfoPath))
             return; // Already registered
 
-        // Generate mnemonic and key pair
-        var mnemonic = new Mnemonic(Wordlist.English, WordCount.Twelve);
-        var hdRoot = mnemonic.DeriveExtKey();
-        var privateKey = hdRoot.PrivateKey;
+        // Key: NODE_PRIVATE_KEY (DPAPI env, set up front by the operator) if present, so the key is never
+        // written to disk; otherwise generate one (stored in node_info.json until moved to DPAPI).
+        Key privateKey;
+        Mnemonic? mnemonic = null;
+        var envKey = Environment.GetEnvironmentVariable("NODE_PRIVATE_KEY")?.Trim();
+        if (!string.IsNullOrEmpty(envKey))
+        {
+            Console.WriteLine("[REGISTRATION] Registering with the key from NODE_PRIVATE_KEY (DPAPI env).");
+            privateKey = new Key(Convert.FromHexString(envKey));
+        }
+        else
+        {
+            mnemonic = new Mnemonic(Wordlist.English, WordCount.Twelve);
+            privateKey = mnemonic.DeriveExtKey().PrivateKey;
+        }
         var publicKey = privateKey.PubKey;
         var publicKeyHex = publicKey.ToHex();
 
@@ -47,14 +58,13 @@ public class NodeRegistrationService
         {
             var responseBody = await response.Content.ReadAsStringAsync();
             // Save mnemonic, privateKey, publicKey, and node info
-            var nodeInfo = new
-            {
-                mnemonic = mnemonic.ToString(),
-                privateKey = privateKey.ToHex(),
-                publicKey = publicKeyHex,
-                apiResponse = JsonSerializer.Deserialize<JsonElement>(responseBody)
-            };
+            var apiResponse = JsonSerializer.Deserialize<JsonElement>(responseBody);
+            object nodeInfo = mnemonic == null
+                ? new { publicKey = publicKeyHex, apiResponse }
+                : new { mnemonic = mnemonic.ToString(), privateKey = privateKey.ToHex(), publicKey = publicKeyHex, apiResponse };
             File.WriteAllText(_nodeInfoPath, JsonSerializer.Serialize(nodeInfo, new JsonSerializerOptions { WriteIndented = true }));
+            if (mnemonic != null)
+                Console.WriteLine("[REGISTRATION] node_info.json now holds the node key in plaintext. Move it to DPAPI with scripts/deploy/Move-NodeKeysToDpapi.ps1.");
             Console.WriteLine("Store node registered successfully.");
         }
         else

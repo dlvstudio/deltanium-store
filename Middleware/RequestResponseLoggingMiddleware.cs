@@ -55,7 +55,7 @@ namespace DeltaniumStore.Middleware
             var displayName = endpoint?.DisplayName ?? string.Empty;
             var clientIp = context.Connection.RemoteIpAddress?.ToString();
 
-            var url = context.Request.Path + context.Request.QueryString.ToString();
+            var url = Redact(context.Request.Path + context.Request.QueryString.ToString());
             var userPk = context.Request.Headers["X-User-PubKey"].ToString();
 
             _logger.LogInformation(
@@ -63,8 +63,8 @@ namespace DeltaniumStore.Middleware
                 url,
                 context.Request.Method,
                 statusCode,
-                Truncate(responseBody, 2000),
-                Truncate(requestBody, 2000),
+                Truncate(Redact(responseBody), 2000),
+                Truncate(Redact(requestBody), 2000),
                 correlationId,
                 requestTimeUtc.ToString("HH:mm:ss.fff"),
                 durationMs,
@@ -94,6 +94,21 @@ namespace DeltaniumStore.Middleware
             if (string.IsNullOrEmpty(text)) return false;
             int control = text.Count(ch => ch < 0x09 || (ch > 0x0D && ch < 0x20));
             return control > 0;
+        }
+
+        // Never let keys or secrets reach the log files (mnemonics, private keys, tokens, passwords).
+        private static readonly System.Text.RegularExpressions.Regex SecretJsonField = new(
+            "(\"[^\"]*(?:mnemonic|private_?key|secret|password|token|api_?key)[^\"]*\"\\s*:\\s*)(\"(?:[^\"\\\\]|\\\\.)*\"|[^,}\\]\\s]+)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+        private static readonly System.Text.RegularExpressions.Regex SecretQueryParam = new(
+            "([?&][^=&]*(?:mnemonic|private|secret|password|token|api_?key)[^=&]*=)[^&]*",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.Compiled);
+
+        public static string Redact(string? s)
+        {
+            if (string.IsNullOrEmpty(s)) return s ?? string.Empty;
+            s = SecretJsonField.Replace(s, "$1\"***\"");
+            return SecretQueryParam.Replace(s, "$1***");
         }
 
         private static string Truncate(string s, int max)

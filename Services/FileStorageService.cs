@@ -23,6 +23,9 @@ namespace DeltaniumStore.Services
         Task<List<FileMetadata>> ListReactionsByParentAsync(string parentFileId);
         Task<List<FileMetadata>> ListCommentsByParentAsync(string parentFileId);
         Task<bool> DeleteFileByFileIdAsync(string fileId);
+        /// <summary>All metadata rows for a fileId (internal re-replication, TOKENOMICS_V2 §6).</summary>
+        Task<List<FileMetadata>> GetAllMetadataForFileAsync(string fileId);
+        Task<BlockMetadata?> GetBlockMetadataAsync(string blockId);
     }
 
     public class FileStorageService : IFileStorageService
@@ -177,6 +180,18 @@ namespace DeltaniumStore.Services
                 var hash = await sha256.ComputeHashAsync(stream);
                 return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
             }
+        }
+
+        public Task<List<FileMetadata>> GetAllMetadataForFileAsync(string fileId)
+        {
+            LoadMetadata();
+            return Task.FromResult(_fileMetadataCache.Values.Where(m => m.FileId == fileId).ToList());
+        }
+
+        public Task<BlockMetadata?> GetBlockMetadataAsync(string blockId)
+        {
+            LoadMetadata();
+            return Task.FromResult(_blockMetadataCache.TryGetValue(blockId, out var m) ? m : null);
         }
 
         public async Task<Stream> GetBlockAsync(string blockId)

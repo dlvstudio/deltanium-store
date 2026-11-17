@@ -27,7 +27,7 @@ namespace deltanium_store.Tests.Controllers
             _mockFileStorage = new Mock<IFileStorageService>();
             var mockContractService = new Mock<IStorageContractService>();
             var mockBlockchainService = new Mock<IBlockchainService>();
-            _controller = new FileController(_mockFileStorage.Object, mockContractService.Object, mockBlockchainService.Object);
+            _controller = new FileController(_mockFileStorage.Object, mockContractService.Object, mockBlockchainService.Object, new Mock<IEgressTracker>().Object);
             
             // Setup controller context
             _controller.ControllerContext = new ControllerContext

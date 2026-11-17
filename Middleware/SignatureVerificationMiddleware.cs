@@ -22,11 +22,31 @@ namespace DeltaniumStore.Middleware
         {
             try
             {
-                // Log all headers
-                _logger.LogInformation("Request Headers:");
-                foreach (var header in context.Request.Headers)
+                // CORS preflight has no signature headers; let UseCors answer it.
+                if (HttpMethods.IsOptions(context.Request.Method))
                 {
-                    _logger.LogInformation($"  {header.Key}: {header.Value}");
+                    await _next(context);
+                    return;
+                }
+
+                // Central-only proof/egress endpoints authenticate with the Central signature (ProofController
+                // refuses them unless CentralRequestAuth marked the request). Reader receipts are public.
+                if (context.Request.Path.StartsWithSegments("/api/proof"))
+                {
+                    if (!context.Request.Path.StartsWithSegments("/api/proof/egress/receipt"))
+                    {
+                        var http = context.RequestServices.GetService(typeof(System.Net.Http.IHttpClientFactory)) as System.Net.Http.IHttpClientFactory;
+                        var config = (Microsoft.Extensions.Configuration.IConfiguration)context.RequestServices.GetService(typeof(Microsoft.Extensions.Configuration.IConfiguration))!;
+                        var (ok, err) = await DeltaniumStore.Security.CentralRequestAuth.AuthenticateAsync(context, config, http);
+                        if (!ok) _logger.LogWarning("Internal call to {Path} refused: {Error}", context.Request.Path, err);
+                    }
+                    await _next(context);
+                    return;
+                }
+                if (context.Request.Path.StartsWithSegments("/api/version"))
+                {
+                    await _next(context);
+                    return;
                 }
 
                 if (!await VerifySignatureAsync(context))
@@ -68,10 +88,7 @@ namespace DeltaniumStore.Middleware
             }
 
             // Log all headers for debugging
-            _logger.LogInformation("Request headers present:");
-            _logger.LogInformation("  X-User-PubKey: {0}", pubKeyHeader.ToString());
-            _logger.LogInformation("  X-Timestamp: {0}", timestampHeader.ToString());
-            _logger.LogInformation("  X-Signature: {0}", signatureHeader.ToString());
+            _logger.LogInformation("Signed request from {PubKey} at {Timestamp}", pubKeyHeader.ToString(), timestampHeader.ToString());
 
             var pubKeyBase64 = pubKeyHeader.ToString();
             var timestamp = timestampHeader.ToString();
@@ -131,7 +148,7 @@ namespace DeltaniumStore.Middleware
                 var message = messageBuilder.ToString();
                 _logger.LogInformation("Message to verify: {0}", message);
 
-                var messageBytes = Encoding.UTF8.GetBytes(message);
+                var messageBytes = Encoding.UTF8.GetBytes(NetworkScope.Scope(message));
                 var messageHash = SHA256.HashData(messageBytes);
                 _logger.LogInformation("Message hash: {0}", BitConverter.ToString(messageHash).Replace("-", ""));
 

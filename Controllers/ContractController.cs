@@ -150,11 +150,12 @@ namespace DeltaniumStore.Controllers
             // Calculate fee
             decimal calculatedFee = basePricePerGBPerMonth * sizeGB * durationMonths;
             
-            // Minimum fee of 10 Deltanium
-            if (calculatedFee < 0)
-                calculatedFee = 0;
+            // v2 §6: minimum fee per contract (default 10 D = 10 VND).
+            decimal minContractFee = _configuration.GetValue<decimal>("StorageNode:Pricing:MinContractFee", 10m);
+            if (calculatedFee < minContractFee)
+                calculatedFee = minContractFee;
 
-            string basis = $"{sizeGB:F2}GB × {durationMonths:F2}months × {basePricePerGBPerMonth} DLT/GB-month";
+            string basis = $"{sizeGB:F2}GB × {durationMonths:F2}months × {basePricePerGBPerMonth} D/GB-month";
             
             return (calculatedFee, basis);
         }
@@ -324,7 +325,7 @@ namespace DeltaniumStore.Controllers
                 }
 
                 // Hash the message using SHA256 (matching app signing)
-                var messageBytes = Encoding.UTF8.GetBytes(messageToSign);
+                var messageBytes = Encoding.UTF8.GetBytes(NetworkScope.Scope(messageToSign));
                 var messageHash = SHA256.HashData(messageBytes);
                 var hashUint256 = new uint256(messageHash);
 
@@ -412,40 +413,21 @@ namespace DeltaniumStore.Controllers
 
         /// <summary>
         /// Sign the contract message as Storage Node.
-        /// Uses the private key from node_info.json to cryptographically sign the message.
+        /// Signs with the node key (NODE_PRIVATE_KEY from DPAPI env, else node_info.json).
         /// </summary>
         private async Task<string> SignContractAsStorageNodeAsync(string messageToSign)
         {
             try 
             {
-                // Read private key from node_info.json
-                if (!System.IO.File.Exists("node_info.json"))
+                var key = DeltaniumStore.Security.NodeKey.Load();
+                if (key == null)
                 {
-                    _logger.LogWarning("node_info.json not found. Using mock signature.");
+                    _logger.LogWarning("No node key (NODE_PRIVATE_KEY or node_info.json). Using mock signature.");
                     return $"node_signature_{Guid.NewGuid():N}";
                 }
-
-                var json = await System.IO.File.ReadAllTextAsync("node_info.json");
-                using var doc = JsonDocument.Parse(json);
-                if (!doc.RootElement.TryGetProperty("privateKey", out var privKeyElement))
-                {
-                     _logger.LogWarning("privateKey not found in node_info.json. Using mock signature.");
-                    return $"node_signature_{Guid.NewGuid():N}";
-                }
-
-                var privateKeyHex = privKeyElement.GetString();
-                if (string.IsNullOrEmpty(privateKeyHex))
-                {
-                     _logger.LogWarning("Empty privateKey in node_info.json. Using mock signature.");
-                    return $"node_signature_{Guid.NewGuid():N}";
-                }
-
-                // Parse private key
-                // Note: NBitcoin Key constructor handles hex string if using the right overload or decoding first
-                var key = new Key(NBitcoin.DataEncoders.Encoders.Hex.DecodeData(privateKeyHex));
 
                 // Hash message to match what App signs (SHA256)
-                var messageBytes = Encoding.UTF8.GetBytes(messageToSign);
+                var messageBytes = Encoding.UTF8.GetBytes(NetworkScope.Scope(messageToSign));
                 var messageHash = SHA256.HashData(messageBytes);
                 var hashUint256 = new uint256(messageHash);
 

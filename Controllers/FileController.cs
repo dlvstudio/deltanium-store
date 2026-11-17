@@ -24,11 +24,15 @@ namespace DeltaniumStore.Controllers
         private readonly IStorageContractService _contractService;
         private readonly IBlockchainService _blockchainService;
 
+        private readonly IEgressTracker _egress;
+
         public FileController(
             IFileStorageService fileStorage,
             IStorageContractService contractService,
-            IBlockchainService blockchainService)
+            IBlockchainService blockchainService,
+            IEgressTracker egress)
         {
+            _egress = egress;
             _fileStorage = fileStorage;
             _contractService = contractService;
             _blockchainService = blockchainService;
@@ -260,6 +264,7 @@ namespace DeltaniumStore.Controllers
                 
                 // Download block directly using the random UUID
                 var blockStream = await _fileStorage.GetBlockAsync(blockId);
+                if (blockStream.CanSeek) _egress.RecordBlockServed(blockId, blockStream.Length);
                 return File(blockStream, "application/octet-stream", blockId);
             }
             catch (FileNotFoundException)
@@ -312,6 +317,7 @@ namespace DeltaniumStore.Controllers
                     
                     // Download block using the first block ID
                     var blockStream = await _fileStorage.GetBlockAsync(blockId);
+                    if (blockStream.CanSeek) _egress.RecordBlockServed(blockId, blockStream.Length);
                     return File(blockStream, "application/octet-stream", blockId);
                 }
                 else
@@ -673,6 +679,8 @@ namespace DeltaniumStore.Controllers
                         blockId,
                         blockIndex
                     );
+                    // v2 §7: remember which owner file this block belongs to for egress billing.
+                    _egress.MapBlock(blockId, fileId);
 
                     return Ok(new
                     {
