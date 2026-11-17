@@ -763,6 +763,82 @@ namespace DeltaniumStore.Services
             return await Task.FromResult(result);
         }
 
+        /// <summary>
+        /// Remove metadata entries created before <paramref name="createdBeforeUtc"/> whose first block is no longer on disk
+        /// (blocks deleted by the old MSDeploy sync, see StoragePaths). Each removed entry is written to
+        /// <c>&lt;storage&gt;/pruned/&lt;timestamp&gt;.json</c> first, so it can be restored. Entries created later are never touched.
+        /// Returns the number of entries removed.
+        /// </summary>
+        public int PruneEntriesWithLostBlocks(DateTime createdBeforeUtc)
+        {
+            LoadMetadata();
+            var lost = _fileMetadataCache.Values
+                .Where(m => !string.IsNullOrEmpty(m.FirstBlockId)
+                            && m.CreationTime.ToUniversalTime() < createdBeforeUtc
+                            && !File.Exists(Path.Combine(_blockDataPath, $"{m.FirstBlockId}.data")))
+                .ToList();
+            if (lost.Count == 0) return 0;
+
+            var quarantineDir = Path.Combine(_storageBasePath, "pruned");
+            Directory.CreateDirectory(quarantineDir);
+            var lostBlocks = lost.Select(m => m.FirstBlockId)
+                .Where(id => _blockMetadataCache.ContainsKey(id))
+                .Select(id => _blockMetadataCache[id]).ToList();
+            File.WriteAllText(
+                Path.Combine(quarantineDir, $"{DateTime.UtcNow:yyyyMMddHHmmss}.json"),
+                System.Text.Json.JsonSerializer.Serialize(new { createdBeforeUtc, files = lost, blocks = lostBlocks }));
+
+            foreach (var m in lost)
+            {
+                // Stores may share one metadata database: another Store can delete the same row first.
+                try { _fileMetadataStore.Delete(m.FileId); } catch (Exception ex) { Console.WriteLine($"Prune {m.FileId}: {ex.Message}"); }
+                _fileMetadataCache.Remove(m.FileId);
+                if (_blockMetadataCache.Remove(m.FirstBlockId))
+                {
+                    try { _blockMetadataStore.Delete(m.FirstBlockId); } catch (Exception ex) { Console.WriteLine($"Prune block {m.FirstBlockId}: {ex.Message}"); }
+                }
+            }
+            return lost.Count;
+        }
+
+        /// <summary>
+        /// Undo <see cref="PruneEntriesWithLostBlocks"/> for entries whose first block IS on this Store's disk
+        /// (with a shared metadata database, another Store may have pruned them because it lacked the block).
+        /// Reads every <c>&lt;storage&gt;/pruned/*.json</c> under <paramref name="quarantineRoot"/> (default: this Store's).
+        /// Returns the number of entries restored.
+        /// </summary>
+        public int RestorePrunedEntriesWithLocalBlocks(string? quarantineRoot = null)
+        {
+            LoadMetadata();
+            var restored = 0;
+            var dirs = new List<string> { Path.Combine(_storageBasePath, "pruned") };
+            if (!string.IsNullOrWhiteSpace(quarantineRoot)) dirs.Add(quarantineRoot);
+            var opts = new System.Text.Json.JsonSerializerOptions { PropertyNameCaseInsensitive = true };
+            foreach (var file in dirs.Where(Directory.Exists).SelectMany(d => Directory.GetFiles(d, "*.json")))
+            {
+                using var doc = System.Text.Json.JsonDocument.Parse(File.ReadAllText(file));
+                var blocks = doc.RootElement.TryGetProperty("blocks", out var b)
+                    ? b.Deserialize<List<BlockMetadata>>(opts) ?? new() : new();
+                var files = doc.RootElement.TryGetProperty("files", out var f)
+                    ? f.Deserialize<List<FileMetadata>>(opts) ?? new() : new();
+                foreach (var m in files)
+                {
+                    if (string.IsNullOrEmpty(m.FirstBlockId) || _fileMetadataCache.ContainsKey(m.FileId)) continue;
+                    if (!File.Exists(Path.Combine(_blockDataPath, $"{m.FirstBlockId}.data"))) continue;
+                    _fileMetadataStore.Upsert(m);
+                    _fileMetadataCache[m.FileId] = m;
+                    var bm = blocks.FirstOrDefault(x => x.BlockId == m.FirstBlockId);
+                    if (bm != null && !_blockMetadataCache.ContainsKey(bm.BlockId))
+                    {
+                        _blockMetadataStore.Upsert(bm);
+                        _blockMetadataCache[bm.BlockId] = bm;
+                    }
+                    restored++;
+                }
+            }
+            return restored;
+        }
+
         public async Task<bool> DeleteFileByFileIdAsync(string fileId)
         {
             try

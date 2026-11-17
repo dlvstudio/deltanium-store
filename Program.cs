@@ -235,6 +235,33 @@ builder.Services.AddCors(options =>
 });
 
 var app = builder.Build();
+
+// One-off cleanup after the MSDeploy data loss: Storage:PruneLostBeforeUtc=<ISO time> removes (quarantines) metadata
+// entries older than that time whose blocks are gone, so feeds stop listing posts that can no longer be opened.
+if (DateTime.TryParse(builder.Configuration["Storage:PruneLostBeforeUtc"], null,
+        System.Globalization.DateTimeStyles.AdjustToUniversal | System.Globalization.DateTimeStyles.AssumeUniversal, out var pruneBefore)
+    && app.Services.GetRequiredService<IFileStorageService>() is FileStorageService fss)
+{
+    // Stores can share one metadata database, so set this on ONE Store only, and only once every Store's
+    // disk has been checked: a Store sees only its own blocks. Never fails startup.
+    try
+    {
+        var pruned = fss.PruneEntriesWithLostBlocks(pruneBefore);
+        Log.Information("Pruned {Count} metadata entries with lost blocks (created before {Before:o})", pruned, pruneBefore);
+    }
+    catch (Exception ex) { Log.Error(ex, "Prune of lost-block metadata failed"); }
+}
+// Storage:RestorePrunedFrom=<folder of pruned/*.json> (or "local"): put back pruned entries whose block is on this Store.
+if (builder.Configuration["Storage:RestorePrunedFrom"] is { Length: > 0 } restoreFrom
+    && app.Services.GetRequiredService<IFileStorageService>() is FileStorageService rfs)
+{
+    try
+    {
+        var restored = rfs.RestorePrunedEntriesWithLocalBlocks(restoreFrom == "local" ? null : restoreFrom);
+        Log.Information("Restored {Count} pruned metadata entries whose blocks are on this Store", restored);
+    }
+    catch (Exception ex) { Log.Error(ex, "Restore of pruned metadata failed"); }
+}
 Log.Information("Store {Version} starting on {Network}", BuildInfo.Summary, NetworkScope.Name);
 // Fail fast if NODE_PRIVATE_KEY does not belong to the registered node (never log the key itself).
 var nodeKey = NodeKey.Load();

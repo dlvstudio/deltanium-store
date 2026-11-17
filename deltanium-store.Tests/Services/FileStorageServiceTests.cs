@@ -24,6 +24,63 @@ namespace deltanium_store.Tests.Services
         }
 
         [Fact]
+        public async Task PruneEntriesWithLostBlocks_removes_only_old_entries_without_blocks_and_quarantines_them()
+        {
+            var cutoff = DateTime.UtcNow.AddMinutes(-1);
+            async Task<FileMetadata> Entry(string id, DateTime created, bool withBlock)
+            {
+                var m = TestDataBuilder.CreateFileMetadata();
+                m.FileId = id;
+                m.FirstBlockId = id + "-b0";
+                m.CreationTime = created;
+                await _fileStorage.StoreFileMetadataAsync(m);
+                if (withBlock) await _fileStorage.StoreBlockAsync(new MemoryStream(new byte[] { 1, 2, 3 }), m.FirstBlockId, 0);
+                return m;
+            }
+            await Entry("old-lost", cutoff.AddHours(-2), withBlock: false);
+            await Entry("old-kept", cutoff.AddHours(-2), withBlock: true);
+            await Entry("new-no-block", DateTime.UtcNow, withBlock: false);
+
+            var pruned = _fileStorage.PruneEntriesWithLostBlocks(cutoff);
+
+            pruned.Should().Be(1);
+            (await _fileStorage.FileExistsAsync("old-lost")).Should().BeFalse();
+            (await _fileStorage.FileExistsAsync("old-kept")).Should().BeTrue();
+            (await _fileStorage.FileExistsAsync("new-no-block")).Should().BeTrue();
+            var quarantine = Directory.GetFiles(Path.Combine(_fileHelper.TempDirectory, "pruned"));
+            quarantine.Should().ContainSingle();
+            File.ReadAllText(quarantine[0]).Should().Contain("old-lost");
+            _fileStorage.PruneEntriesWithLostBlocks(cutoff).Should().Be(0);
+        }
+
+        [Fact]
+        public async Task Restore_puts_back_pruned_entries_whose_block_this_store_holds()
+        {
+            // Store A (no block) prunes an entry; Store B holds the block and restores it from A's quarantine.
+            var cutoff = DateTime.UtcNow.AddMinutes(-1);
+            var m = TestDataBuilder.CreateFileMetadata();
+            m.FileId = "shared-post";
+            m.FirstBlockId = "shared-post-b0";
+            m.CreationTime = cutoff.AddHours(-1);
+            await _fileStorage.StoreFileMetadataAsync(m);
+            _fileStorage.PruneEntriesWithLostBlocks(cutoff).Should().Be(1);
+            var quarantineA = Path.Combine(_fileHelper.TempDirectory, "pruned");
+
+            var dirB = Path.Combine(Path.GetTempPath(), "store-b-" + Guid.NewGuid().ToString("N"));
+            try
+            {
+                var storeB = new FileStorageService(dirB);
+                await storeB.StoreBlockAsync(new MemoryStream(new byte[] { 9 }), "shared-post-b0", 0);
+
+                storeB.RestorePrunedEntriesWithLocalBlocks(quarantineA).Should().Be(1);
+                (await storeB.FileExistsAsync("shared-post")).Should().BeTrue();
+                storeB.RestorePrunedEntriesWithLocalBlocks(quarantineA).Should().Be(0); // idempotent
+                _fileStorage.RestorePrunedEntriesWithLocalBlocks().Should().Be(0);     // A has no block: nothing back
+            }
+            finally { try { Directory.Delete(dirB, true); } catch { } }
+        }
+
+        [Fact]
         public async Task StoreFileMetadataAsync_ShouldSaveNewFileMetadata()
         {
             // Arrange
