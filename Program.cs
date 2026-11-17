@@ -142,7 +142,10 @@ builder.Services.AddSwaggerGen(c =>
 });
 
 // Configure file storage service (JSON or MySQL metadata; encrypted blocks stay on disk)
-var storageBasePath = Path.Combine(Directory.GetCurrentDirectory(), "FileStorage");
+// Outside the IIS site folder in production: MSDeploy sync deletes whatever is not in the package.
+var storageBasePath = DeltaniumStore.Security.StoragePaths.ResolveBasePath(
+    builder.Configuration["Storage:BasePath"], Directory.GetCurrentDirectory());
+Log.Information("Store block storage at {StorageBasePath}", storageBasePath);
 var storageProvider = builder.Configuration["Storage:Provider"] ?? "Json";
 var connectionString = builder.Configuration.GetConnectionString("Default");
 
