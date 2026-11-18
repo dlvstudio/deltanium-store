@@ -45,6 +45,35 @@ namespace DeltaniumStore.Services
             _logger.LogInformation($"[BlockchainService] Initialized with BlockerApi: {_blockerApiUrl}");
         }
 
+        private NBitcoin.Key? LoadNodeKey()
+        {
+            try { return DeltaniumStore.Security.NodeKey.Load(); }
+            catch (Exception ex)
+            {
+                _logger.LogError("[BlockchainService] Node key unavailable, tx goes without the Store version: {Error}", ex.Message);
+                return null;
+            }
+        }
+
+        /// <summary>Signed Store version for a tx (message format shared with the Blocker's VersionAttestation).</summary>
+        public static VersionOriginInfo? VersionOrigin(string txId, NBitcoin.Key? key)
+        {
+            if (key == null) return null;
+            var version = BuildInfo.Version;
+            var commit = BuildInfo.Commit;
+            var message = $"DELTANIUM-TX-VERSION\n{txId}\nstore\n{version}\n{commit}";
+            var hash = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(NetworkScope.Scope(message)));
+            var sig = Convert.ToBase64String(key.Sign(new NBitcoin.uint256(hash)).ToDER());
+            return new VersionOriginInfo("store", version, commit, key.PubKey.ToHex(), sig);
+        }
+
+        public record VersionOriginInfo(
+            [property: System.Text.Json.Serialization.JsonPropertyName("service")] string Service,
+            [property: System.Text.Json.Serialization.JsonPropertyName("version")] string Version,
+            [property: System.Text.Json.Serialization.JsonPropertyName("commit")] string Commit,
+            [property: System.Text.Json.Serialization.JsonPropertyName("publicKey")] string PublicKey,
+            [property: System.Text.Json.Serialization.JsonPropertyName("signature")] string Signature);
+
         /// <summary>
         /// Submit a StorageOperation transaction that includes contract proof.
         /// The contract itself proves the App agreed to pay the storage fee.
@@ -80,7 +109,9 @@ namespace DeltaniumStore.Services
                     timestamp = timestamp,
                     fee = contract.TotalFee.ToString("F10", System.Globalization.CultureInfo.InvariantCulture) as string, // Use actual fee from contract
                     signature = contract.AppSignature,
-                    signPayload = !string.IsNullOrEmpty(contract.ContractHash) ? contract.ContractHash : contract.MessageToSign
+                    signPayload = !string.IsNullOrEmpty(contract.ContractHash) ? contract.ContractHash : contract.MessageToSign,
+                    // This Store's build, signed with its node key; the Blocker refuses a StorageOperation without it.
+                    origin = VersionOrigin(txId, LoadNodeKey())
                 };
 
                 _logger.LogInformation($"[BlockchainService] Submitting StorageOperation tx: {txId}");
