@@ -10,13 +10,15 @@ public class NodeRegistrationService
 {
     private readonly string _apiUrl;
     private readonly string _endpoint;
+    private readonly string? _tcpEndpoint;
     private readonly string _voucher;
     private readonly string _nodeInfoPath = "node_info.json";
 
-    public NodeRegistrationService(string apiUrl, string endpoint, string voucher)
+    public NodeRegistrationService(string apiUrl, string endpoint, string voucher, string? tcpEndpoint = null)
     {
         _apiUrl = apiUrl;
         _endpoint = endpoint;
+        _tcpEndpoint = string.IsNullOrWhiteSpace(tcpEndpoint) ? null : tcpEndpoint.Trim();
         _voucher = voucher;
     }
 
@@ -46,6 +48,7 @@ public class NodeRegistrationService
         var payload = new
         {
             endpoint = _endpoint,
+            tcpEndpoint = _tcpEndpoint,
             voucher = _voucher,
             publicKey = publicKeyHex
         };

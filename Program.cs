@@ -367,7 +367,8 @@ if (string.IsNullOrWhiteSpace(voucher))
 }
 else
 {
-    var regService = new NodeRegistrationService(apiUrl, nodeEndpoint, voucher);
+    // Optional DLTP address (tcps://host:port, served by the DLTP gateway); a node may have HTTPS, TCP or both.
+    var regService = new NodeRegistrationService(apiUrl, nodeEndpoint, voucher, nodeRegConfig["TcpEndpoint"]);
     await regService.RegisterNodeIfNeededAsync();
 }
 

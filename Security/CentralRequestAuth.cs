@@ -74,13 +74,34 @@ namespace DeltaniumStore.Security
 
             var centralKey = await GetCentralKeyAsync(config, http);
             if (string.IsNullOrWhiteSpace(centralKey)) return (false, "Central public key unknown");
-            if (!Verify(centralKey, NetworkScope.Scope(message), signature)) return (false, "Invalid Central signature");
+            if (!Verify(centralKey, NetworkScope.Scope(message), signature))
+            {
+                // Via the DLTP gateway the request arrives with this node's HTTPS host; Central signed the TCP
+                // authority it dialled (host:port). Accept that only when it is this node's own TcpEndpoint,
+                // so a signature meant for another node still fails.
+                var dltp = req.Headers["X-Dltp-Authority"].ToString();
+                var own = OwnTcpAuthority(config);
+                if (dltp.Length == 0 || own == null || !string.Equals(dltp, own, StringComparison.OrdinalIgnoreCase))
+                    return (false, "Invalid Central signature");
+                message = BuildMessage(req.Method, own, req.Path.Value ?? "", timestamp, bodyHash);
+                if (!Verify(centralKey, NetworkScope.Scope(message), signature)) return (false, "Invalid Central signature");
+            }
 
             var id = Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(message)));
             var now = DateTime.UtcNow;
             foreach (var kv in Used) if (kv.Value < now) Used.TryRemove(kv.Key, out _);
             if (!Used.TryAdd(id, now + MaxClockSkew + MaxClockSkew)) return (false, "Central request already used");
             return (true, "");
+        }
+
+        /// <summary>host:port of this node's DLTP endpoint (NodeRegistration:TcpEndpoint = tcps://host:port), if any.</summary>
+        public static string? OwnTcpAuthority(IConfiguration config)
+        {
+            var v = (config["NodeRegistration:TcpEndpoint"] ?? "").Trim().TrimEnd('/');
+            if (v.Length == 0) return null;
+            var i = v.IndexOf("://", StringComparison.Ordinal);
+            var authority = i >= 0 ? v[(i + 3)..] : v;
+            return authority.Contains(':') ? authority.ToLowerInvariant() : null;
         }
 
         public static bool Verify(string publicKeyHex, string scopedMessage, string signatureBase64)

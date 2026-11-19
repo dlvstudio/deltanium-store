@@ -36,6 +36,10 @@
     <Content Remove="deltanium-store.Tests/**" />
     <EmbeddedResource Remove="deltanium-store.Tests/**" />
     <None Remove="deltanium-store.Tests/**" />
+    <Compile Remove="DltpGateway/**" />
+    <Content Remove="DltpGateway/**" />
+    <EmbeddedResource Remove="DltpGateway/**" />
+    <None Remove="DltpGateway/**" />
   </ItemGroup>
 
 </Project>
