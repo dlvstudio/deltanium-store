@@ -32,16 +32,16 @@ public class RealMysqlStoreIntegrationTests : IDisposable
         _contracts = new MySqlContractStore(_factory);
     }
 
+    /// <summary>
+    /// Only an explicit local database: DELTANIUM_MYSQL_CS pointing at localhost. Never the user-secrets connection
+    /// string, which points at the production server (these tests write and delete rows).
+    /// </summary>
     private static string? TryLoadCs()
     {
-        var env = Environment.GetEnvironmentVariable("DELTANIUM_MYSQL_CS");
-        if (!string.IsNullOrWhiteSpace(env)) return env;
-        var path = Path.Combine(
-            Environment.GetFolderPath(Environment.SpecialFolder.UserProfile),
-            ".microsoft", "usersecrets", "deltanium-store-local-secrets", "secrets.json");
-        if (!File.Exists(path)) return null;
-        using var doc = JsonDocument.Parse(File.ReadAllText(path));
-        return doc.RootElement.TryGetProperty("ConnectionStrings:Default", out var v) ? v.GetString() : null;
+        var cs = Environment.GetEnvironmentVariable("DELTANIUM_MYSQL_CS");
+        if (string.IsNullOrWhiteSpace(cs)) return null;
+        var host = new MySqlConnector.MySqlConnectionStringBuilder(cs).Server.Trim();
+        return host is "localhost" or "127.0.0.1" or "::1" ? cs : null;
     }
 
     public void Dispose()
@@ -67,7 +67,7 @@ public class RealMysqlStoreIntegrationTests : IDisposable
     [Fact]
     public void RealDb_FileBlockContract_UpsertLoadDelete()
     {
-        Assert.True(_files != null && _blocks != null && _contracts != null, "Missing store MySQL secrets");
+        if (_files == null || _blocks == null || _contracts == null) return; // no local MySQL (DELTANIUM_MYSQL_CS on localhost): nothing to check
 
         var fileId = $"{_tag}_file";
         var blockId = $"{_tag}_block";
