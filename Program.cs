@@ -13,7 +13,20 @@ using Serilog;
 DpapiEnvironment.LoadSiteProgramDataSecrets();
 DpapiEnvironment.ExpandProcessEnvironment();
 
-var builder = WebApplication.CreateBuilder(args);
+// Installed nodes (Windows service, systemd, launchd) keep their key, files and logs in DELTANIUM_HOME and read
+// appsettings.json from the program folder. Without it nothing changes (IIS, dotnet run).
+var deltaniumHome = Environment.GetEnvironmentVariable("DELTANIUM_HOME");
+if (!string.IsNullOrWhiteSpace(deltaniumHome))
+{
+    Directory.CreateDirectory(deltaniumHome);
+    Directory.SetCurrentDirectory(deltaniumHome);
+}
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = string.IsNullOrWhiteSpace(deltaniumHome) ? null : AppContext.BaseDirectory
+});
+builder.Services.AddWindowsService(o => o.ServiceName = "DeltaniumStore"); // no-op unless run as a Windows service
 builder.Configuration.AddDpapiDecryptedOverrides();
 
 // Serilog configuration with daily rolling files
