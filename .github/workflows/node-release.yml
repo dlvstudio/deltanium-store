@@ -1,0 +1,106 @@
+# Builds self-contained Store node packages (no .NET install needed) with the installer, and publishes them as a
+# GitHub Release. Runs on the public mirror; Azure Pipelines ignores this file.
+#   Push a tag "store-v<version>", or run it from the Actions tab.
+#   Optional input testnet_voucher: also run the real installer on Linux and macOS against testnet.
+name: Store node release
+
+on:
+  push:
+    tags: ['store-v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag, e.g. store-v1.3.0 (empty: build and test only)'
+        required: false
+        default: ''
+      testnet_voucher:
+        description: 'Optional testnet voucher(s), comma separated (Linux, macOS): run the real installer'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+
+env:
+  RELEASE_TAG: ${{ github.event.inputs.tag || (startsWith(github.ref, 'refs/tags/') && github.ref_name || '') }}
+
+jobs:
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { rid: win-x64,     os: windows-latest, ext: zip }
+          - { rid: linux-x64,   os: ubuntu-latest,  ext: tar.gz }
+          - { rid: linux-arm64, os: ubuntu-latest,  ext: tar.gz }
+          - { rid: osx-arm64,   os: macos-latest,   ext: tar.gz }
+          - { rid: osx-x64,     os: macos-latest,   ext: tar.gz }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: deltanium-store }
+      - uses: actions/checkout@v4
+        with: { repository: dlvstudio/deltanium-core, path: deltanium-core }
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '8.0.x' }
+      - name: Publish (self-contained, single file)
+        shell: bash
+        run: |
+          dotnet publish deltanium-store/deltanium-store.csproj -c Release -r ${{ matrix.rid }} --self-contained true \
+            -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=None \
+            -o "pkg/deltanium-store-${{ matrix.rid }}"
+          cp deltanium-store/installer/README.txt "pkg/deltanium-store-${{ matrix.rid }}/"
+          cp deltanium-store/LICENSE "pkg/deltanium-store-${{ matrix.rid }}/LICENSE.txt" 2>/dev/null || true
+          if [[ "${{ matrix.rid }}" == win-* ]]; then
+            cp deltanium-store/installer/install.ps1 "pkg/deltanium-store-${{ matrix.rid }}/"
+          else
+            cp deltanium-store/installer/install.sh "pkg/deltanium-store-${{ matrix.rid }}/"
+            chmod +x "pkg/deltanium-store-${{ matrix.rid }}/install.sh" "pkg/deltanium-store-${{ matrix.rid }}/deltanium-store"
+          fi
+      - name: Smoke test (the program starts on this OS)
+        if: matrix.rid != 'linux-arm64' && matrix.rid != 'osx-x64'
+        shell: bash
+        run: |
+          cd "pkg/deltanium-store-${{ matrix.rid }}"
+          export DELTANIUM_HOME="$RUNNER_TEMP/deltanium-store-home" Storage__Provider=Json NETWORK_ID=deltanium-test
+          export NodeRegistration__ApiUrl=https://testnet-api.deltanium.com CentralApi__BaseUrl=https://testnet-api.deltanium.com
+          export CentralApiUrl=https://testnet-api.deltanium.com LISTEN_URLS=http://127.0.0.1:5001
+          (./deltanium-store --urls http://127.0.0.1:5001 > "$RUNNER_TEMP/smoke.log" 2>&1 &)
+          for i in $(seq 1 30); do sleep 2; curl -fsS http://127.0.0.1:5001/api/version && exit 0 || true; grep -q "__never__" "$RUNNER_TEMP/smoke.log" && { echo "started and stopped as expected without a voucher"; exit 0; }; done
+          cat "$RUNNER_TEMP/smoke.log" | tail -40; exit 1
+      - name: Real install on testnet
+        if: github.event.inputs.testnet_voucher != '' && (matrix.rid == 'linux-x64' || matrix.rid == 'osx-arm64')
+        shell: bash
+        env:
+          VOUCHERS: ${{ github.event.inputs.testnet_voucher }}
+        run: |
+          V="$(echo "$VOUCHERS" | cut -d, -f$([ "${{ matrix.rid }}" = linux-x64 ] && echo 1 || echo 2))"
+          [ -n "$V" ] || { echo "no voucher for this OS"; exit 0; }
+          cd "pkg/deltanium-store-${{ matrix.rid }}"
+          sudo ./install.sh --network testnet --voucher "$V" --non-interactive
+          sudo ./install.sh --uninstall
+      - name: Package
+        shell: bash
+        run: |
+          cd pkg
+          if [ "${{ matrix.ext }}" = zip ]; then 7z a -tzip "../deltanium-store-${{ matrix.rid }}.zip" "deltanium-store-${{ matrix.rid }}" > /dev/null
+          else tar -czf "../deltanium-store-${{ matrix.rid }}.tar.gz" "deltanium-store-${{ matrix.rid }}"; fi
+      - uses: actions/upload-artifact@v4
+        with: { name: 'deltanium-store-${{ matrix.rid }}', path: 'deltanium-store-${{ matrix.rid }}.${{ matrix.ext }}' }
+
+  release:
+    needs: build
+    if: github.event.inputs.tag != '' || startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { path: dist, merge-multiple: true }
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          (cd dist && sha256sum * > SHA256SUMS.txt)
+          gh release create "$RELEASE_TAG" dist/* --target "$GITHUB_SHA" \
+            --title "Deltanium Store node ${RELEASE_TAG#store-v}" --notes-file installer/RELEASE_NOTES.md \
+            || gh release upload "$RELEASE_TAG" dist/* --clobber
