@@ -816,26 +816,28 @@ namespace DeltaniumStore.Controllers
                     }
                 }
 
-                // Transform using native PRE library via Deltanium.Core.Cryptography.Pre.UmbralPre
-                // metadata.EncryptedKey contains PRE bundle for author (base64 from app). It may be bytes already.
-                var inputBundle = metadata.EncryptedKey;
+                // The PRE capsule for followers is EncapsulatedForRecipient; EncryptedKey is the author's own ECIES key
+                // and cannot be re-encrypted.
+                var inputBundle = metadata.EncapsulatedForRecipient;
                 if (inputBundle == null || inputBundle.Length == 0)
                 {
-                    return BadRequest("Missing encryptedKey in metadata");
+                    return BadRequest("Missing PRE capsule (encapsulatedForRecipient) in metadata");
+                }
+                if (rkBytes == null || rkBytes.Length == 0)
+                {
+                    return StatusCode(403, "No re-encryption key for this follower");
                 }
 
-                // If rk available, perform transform via core UmbralPre; otherwise echo bundle (client fallback)
-                byte[] outputBundle = inputBundle;
-                if (rkBytes != null && rkBytes.Length > 0)
+                byte[] outputBundle;
+                try
                 {
-                    try
-                    {
-                        outputBundle = Deltanium.Core.Cryptography.Pre.UmbralPre.Reencrypt(inputBundle, rkBytes);
-                    }
-                    catch (Exception ex)
-                    {
-                        Console.WriteLine($"[PRE] Native reencrypt failed, falling back: {ex.Message}");
-                    }
+                    outputBundle = Deltanium.Core.Cryptography.Pre.UmbralPre.Reencrypt(inputBundle, rkBytes);
+                }
+                catch (Exception ex)
+                {
+                    // Never hand back the untransformed capsule as if it were the follower's.
+                    Console.WriteLine($"[PRE] Native reencrypt failed: {ex.Message}");
+                    return StatusCode(502, "PRE re-encryption unavailable");
                 }
                 var encryptedKeyForB = Convert.ToBase64String(outputBundle);
                 return Ok(new { encryptedKeyForB });
