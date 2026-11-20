@@ -147,7 +147,26 @@ for i in $(seq 1 30); do
   sleep 2
   if V="$(curl -fsS --max-time 5 "http://127.0.0.1:$HTTP_PORT/api/version" 2>/dev/null)"; then
     echo "Node running: $V" | cut -c1-120
-    [ -f "$DATA_DIR/node_info.json" ] && echo "Node public key: $(json "$(cat "$DATA_DIR/node_info.json")" "d.get('publicKey') or d.get('PublicKey')")"
+    PK=""
+    [ -f "$DATA_DIR/node_info.json" ] && PK="$(json "$(cat "$DATA_DIR/node_info.json")" "d.get('publicKey') or d.get('PublicKey') or ''")"
+    if [ -n "$PK" ]; then
+      echo "Node public key: $PK"
+      # New nodes join after the registration fee is paid and the Super Admin approves it.
+      if REG="$(curl -fsS --max-time 15 "$CENTRAL/api/noderegistration/$PK" 2>/dev/null)"; then
+        printf '%s' "$REG" | python3 -c '
+import json,sys
+d=json.load(sys.stdin); print(); print("Registration status: " + d.get("status",""))
+if d.get("status")=="awaiting_payment":
+    print("  Fee            : {:,} VND".format(int(d.get("feeVnd",0))))
+    print("  Transfer note  : " + d.get("transferContent",""))
+    b=d.get("bank") or {}
+    if b: print("  Bank           : {} {} ({})".format(b.get("bankName",""), b.get("accountNo",""), b.get("accountName","")))
+    p=d.get("paypal") or {}
+    if p: print("  PayPal         : {} (put the transfer note in the message)".format(p.get("url","")))
+print("  " + (d.get("instructions") or ""))'
+        echo "  Status any time: $CENTRAL/api/noderegistration/$PK"
+      fi
+    fi
     echo
     echo "Next: forward TCP port $DLTP_PORT on your router to this computer's local IP."
     echo "If your provider uses carrier-grade NAT (several homes share one public IP), ask for a public IP or use a VPS."

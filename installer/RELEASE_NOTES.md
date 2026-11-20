@@ -4,7 +4,9 @@ Deltanium Store node for Windows, Linux and macOS: self-contained, no .NET insta
 2. Run the installer: **Windows** `install.ps1` in PowerShell as administrator; **Linux / macOS** `sudo ./install.sh`.
 3. Answer: network (mainnet / testnet), your one-shot voucher, and how the network reaches you (`auto` uses your
    public IP over DLTP, TCP port 7333: no domain needed).
-4. Forward TCP port 7333 on your router to the computer. Check https://deltanium.com/nodes.html.
+4. Pay the 100,000 VND registration fee (bank transfer or PayPal) with the transfer note the installer shows
+   (`NODE…`). The Super Admin approves it and the network activates the node once it answers.
+5. Forward TCP port 7333 on your router to the computer. Check https://deltanium.com/nodes.html.
 
 The installer shows the network's Central and Super Admin keys: compare them with NODE_KEYS.md before you continue.
 Your node key stays in the data folder (service account and administrators only); back it up.

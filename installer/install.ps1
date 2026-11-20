@@ -127,7 +127,24 @@ for ($i = 0; $i -lt 30; $i++) {
 if (-not $ok) { throw "The node did not answer on port $HttpPort. See the logs in $DataDir\logs." }
 Say "Node running: $($v.service) $($v.version) on $Network."
 $info = Join-Path $DataDir 'node_info.json'
-if (Test-Path $info) { Say "Node public key: $((Get-Content $info -Raw | ConvertFrom-Json).publicKey)" }
+if (Test-Path $info) {
+    $pk = (Get-Content $info -Raw | ConvertFrom-Json).publicKey
+    Say "Node public key: $pk"
+    # New nodes join after the registration fee is paid and the Super Admin approves it.
+    try {
+        $reg = Invoke-RestMethod "$Central/api/noderegistration/$pk" -TimeoutSec 15
+        Say ''
+        Say "Registration status: $($reg.status)"
+        if ($reg.status -eq 'awaiting_payment') {
+            Say ("  Fee            : {0:N0} VND" -f [double]$reg.feeVnd)
+            Say "  Transfer note  : $($reg.transferContent)"
+            if ($reg.bank) { Say "  Bank           : $($reg.bank.bankName) $($reg.bank.accountNo) ($($reg.bank.accountName))" }
+            if ($reg.paypal) { Say "  PayPal         : $($reg.paypal.url) (put the transfer note in the message)" }
+        }
+        Say "  $($reg.instructions)"
+        Say "  Status any time: $Central/api/noderegistration/$pk"
+    } catch {}
+}
 Say ''
 Say "Next: forward TCP port $DltpPort on your router to this computer's local IP."
 Say 'If your provider uses carrier-grade NAT (several homes share one public IP), ask for a public IP or use a VPS.'

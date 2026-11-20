@@ -1,10 +1,12 @@
 using System;
 using System.IO;
 using System.Net.Http;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 using NBitcoin;
+using DeltaniumStore;
 
 public class NodeRegistrationService
 {
@@ -45,12 +47,16 @@ public class NodeRegistrationService
         var publicKey = privateKey.PubKey;
         var publicKeyHex = publicKey.ToHex();
 
+        // Signed with the node key: only the holder of this key can register it (Central checks it).
+        var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
         var payload = new
         {
             endpoint = _endpoint,
             tcpEndpoint = _tcpEndpoint,
             voucher = _voucher,
-            publicKey = publicKeyHex
+            publicKey = publicKeyHex,
+            timestamp,
+            signature = SignRegistration(privateKey, "store", publicKeyHex, _endpoint, _tcpEndpoint, _voucher, timestamp)
         };
 
         using var client = new HttpClient();
@@ -68,7 +74,15 @@ public class NodeRegistrationService
             File.WriteAllText(_nodeInfoPath, JsonSerializer.Serialize(nodeInfo, new JsonSerializerOptions { WriteIndented = true }));
             if (mnemonic != null)
                 Console.WriteLine("[REGISTRATION] node_info.json now holds the node key in plaintext. Move it to DPAPI with scripts/deploy/Move-NodeKeysToDpapi.ps1.");
-            Console.WriteLine("Store node registered successfully.");
+            if ((int)response.StatusCode == 202)
+            {
+                // Registered but not active yet: the fee must be paid and approved by the Super Admin first.
+                Console.WriteLine("[REGISTRATION] Registration received; the node is not active yet.");
+                if (apiResponse.TryGetProperty("instructions", out var how)) Console.WriteLine("[REGISTRATION] " + how.GetString());
+                Console.WriteLine($"[REGISTRATION] Status: {_apiUrl}/api/noderegistration/{publicKeyHex}");
+            }
+            else
+                Console.WriteLine("Store node registered successfully.");
         }
         else
         {
@@ -77,4 +91,14 @@ public class NodeRegistrationService
             throw new Exception($"Node registration failed: {error}");
         }
     }
-} 
+
+    /// <summary>NODE-REGISTER|role|pk|endpoint|tcpEndpoint|voucher|ts, signed over NetworkScope like every node signature.</summary>
+    public static string RegistrationMessage(string role, string publicKey, string? endpoint, string? tcpEndpoint, string voucher, long timestamp) =>
+        $"NODE-REGISTER|{role}|{publicKey.Trim()}|{(endpoint ?? "").Trim().TrimEnd('/')}|{(tcpEndpoint ?? "").Trim().TrimEnd('/')}|{voucher.Trim()}|{timestamp}";
+
+    public static string SignRegistration(Key key, string role, string publicKey, string? endpoint, string? tcpEndpoint, string voucher, long timestamp)
+    {
+        var hash = SHA256.HashData(Encoding.UTF8.GetBytes(NetworkScope.Scope(RegistrationMessage(role, publicKey, endpoint, tcpEndpoint, voucher, timestamp))));
+        return Convert.ToBase64String(key.Sign(new uint256(hash)).ToDER());
+    }
+}

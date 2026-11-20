@@ -30,6 +30,13 @@ Your node key
   readable only by the service account and administrators. Back it up somewhere safe: it is your node's identity
   and where your earnings go. Never share it.
 
+Registration fee and approval
+  A new node joins the network in three steps: it registers with your voucher (signed with its own key), you pay
+  the 100,000 VND registration fee by bank transfer or PayPal with the transfer note the installer shows
+  (NODE...), and the Super Admin approves the payment. The network then activates the node as soon as it answers
+  on its address. The installer prints the amount, account and note; check the status any time at
+  <Central>/api/noderegistration/<your node public key>. Until then the node runs but receives no work.
+
 Check it works
   The node answers locally on http://127.0.0.1:5001/api/version, and appears on https://deltanium.com/nodes.html
   (add ?net=testnet for testnet). Logs are in the "logs" folder of the data folder.
