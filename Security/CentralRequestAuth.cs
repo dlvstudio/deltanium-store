@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Concurrent;
+using System.Collections.Generic;
+using System.Linq;
 using System.IO;
 using System.Net.Http;
 using System.Security.Cryptography;
@@ -79,9 +81,9 @@ namespace DeltaniumStore.Security
                 // Via the DLTP gateway the request arrives with this node's HTTPS host; Central signed the TCP
                 // authority it dialled (host:port). Accept that only when it is this node's own TcpEndpoint,
                 // so a signature meant for another node still fails.
-                var dltp = req.Headers["X-Dltp-Authority"].ToString();
-                var own = OwnTcpAuthority(config);
-                if (dltp.Length == 0 || own == null || !string.Equals(dltp, own, StringComparison.OrdinalIgnoreCase))
+                var dltp = req.Headers["X-Dltp-Authority"].ToString().Trim().ToLowerInvariant();
+                var own = OwnTcpAuthorities(config).FirstOrDefault(a => string.Equals(a, dltp, StringComparison.OrdinalIgnoreCase));
+                if (dltp.Length == 0 || own == null)
                     return (false, "Invalid Central signature");
                 message = BuildMessage(req.Method, own, req.Path.Value ?? "", timestamp, bodyHash);
                 if (!Verify(centralKey, NetworkScope.Scope(message), signature)) return (false, "Invalid Central signature");
@@ -92,6 +94,19 @@ namespace DeltaniumStore.Security
             foreach (var kv in Used) if (kv.Value < now) Used.TryRemove(kv.Key, out _);
             if (!Used.TryAdd(id, now + MaxClockSkew + MaxClockSkew)) return (false, "Central request already used");
             return (true, "");
+        }
+
+        /// <summary>
+        /// Every host:port this node is reachable at over DLTP: NodeRegistration:TcpEndpoint (gateway),
+        /// Dltp:PublicEndpoint when it names an address, and the address Central confirmed for "tcps://auto:PORT".
+        /// </summary>
+        public static IEnumerable<string> OwnTcpAuthorities(IConfiguration config)
+        {
+            var list = new List<string>();
+            if (OwnTcpAuthority(config) is { } a) list.Add(a);
+            if (DeltaniumStore.Dltp.NodeDltpService.AuthorityOf(config["Dltp:PublicEndpoint"]) is { } b) list.Add(b);
+            if (DeltaniumStore.Dltp.NodeDltpService.AnnouncedAuthority is { } c) list.Add(c);
+            return list;
         }
 
         /// <summary>host:port of this node's DLTP endpoint (NodeRegistration:TcpEndpoint = tcps://host:port), if any.</summary>

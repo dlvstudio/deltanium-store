@@ -190,6 +190,17 @@ builder.Services.AddHttpClient<IBlockchainService, BlockchainService>();
 // Configure HTTP client and Central API service
 builder.Services.AddHttpClient<ICentralApiService, CentralApiService>();
 
+// Built-in DLTP listener (off unless Dltp:Port is set), for Stores on a home or personal computer:
+// tcps://<public IP>:<port> with no domain, authenticated by the node key. See Dltp/NodeDltpService.cs.
+NBitcoin.Key? dltpNodeKey = null; // cached once found (registration may create it after start-up)
+builder.Services.AddSingleton(new DeltaniumStore.Dltp.NodeDltpOptions
+{
+    NodeKey = () => dltpNodeKey ??= TryLoadNodeKey(),
+    CentralUrl = () => builder.Configuration["NodeRegistration:ApiUrl"] ?? builder.Configuration["CentralApi:BaseUrl"],
+    Role = "storenode"
+});
+builder.Services.AddHostedService<DeltaniumStore.Dltp.NodeDltpService>();
+
 // Browser clients (Flutter web) call store nodes directly for upload/download.
 builder.Services.AddCors(options =>
 {
@@ -357,7 +368,9 @@ app.MapGet("/weatherforecast", () =>
 // Register node with API if needed
 var nodeRegConfig = builder.Configuration.GetSection("NodeRegistration");
 string apiUrl = nodeRegConfig["ApiUrl"] ?? "http://localhost:5002";
-string nodeEndpoint = nodeRegConfig["Endpoint"] ?? "http://localhost:5000";
+// A Store on a home computer may have no HTTPS at all, only its built-in DLTP listener (Dltp:PublicEndpoint).
+string? dltpPublicEndpoint = builder.Configuration["Dltp:PublicEndpoint"];
+string nodeEndpoint = nodeRegConfig["Endpoint"] ?? (string.IsNullOrWhiteSpace(dltpPublicEndpoint) ? "http://localhost:5000" : "");
 string? voucher = Environment.GetEnvironmentVariable("STORE_VOUCHER");
 if (string.IsNullOrWhiteSpace(voucher))
     voucher = nodeRegConfig["Voucher"];
@@ -368,11 +381,16 @@ if (string.IsNullOrWhiteSpace(voucher))
 else
 {
     // Optional DLTP address (tcps://host:port, served by the DLTP gateway); a node may have HTTPS, TCP or both.
-    var regService = new NodeRegistrationService(apiUrl, nodeEndpoint, voucher, nodeRegConfig["TcpEndpoint"]);
+    var regService = new NodeRegistrationService(apiUrl, nodeEndpoint, voucher, nodeRegConfig["TcpEndpoint"] ?? dltpPublicEndpoint);
     await regService.RegisterNodeIfNeededAsync();
 }
 
 app.Run();
+
+static NBitcoin.Key? TryLoadNodeKey()
+{
+    try { return NodeKey.Load(); } catch { return null; }
+}
 
 record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
 {
