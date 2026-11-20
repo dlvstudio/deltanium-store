@@ -370,7 +370,10 @@ var nodeRegConfig = builder.Configuration.GetSection("NodeRegistration");
 string apiUrl = nodeRegConfig["ApiUrl"] ?? "http://localhost:5002";
 // A Store on a home computer may have no HTTPS at all, only its built-in DLTP listener (Dltp:PublicEndpoint).
 string? dltpPublicEndpoint = builder.Configuration["Dltp:PublicEndpoint"];
-string nodeEndpoint = nodeRegConfig["Endpoint"] ?? (string.IsNullOrWhiteSpace(dltpPublicEndpoint) ? "http://localhost:5000" : "");
+string nodeEndpoint = nodeRegConfig["Endpoint"] ?? "http://localhost:5000";
+// With a DLTP address, a local-only HTTP endpoint (the appsettings default) is not a public way in: register none.
+if (!string.IsNullOrWhiteSpace(dltpPublicEndpoint) && Uri.TryCreate(nodeEndpoint, UriKind.Absolute, out var localEndpoint) && localEndpoint.IsLoopback)
+    nodeEndpoint = "";
 string? voucher = Environment.GetEnvironmentVariable("STORE_VOUCHER");
 if (string.IsNullOrWhiteSpace(voucher))
     voucher = nodeRegConfig["Voucher"];
