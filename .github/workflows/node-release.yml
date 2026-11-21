@@ -46,7 +46,9 @@ jobs:
       - name: Publish (self-contained, single file)
         shell: bash
         run: |
-          dotnet publish deltanium-store/deltanium-store.csproj -c Release -r ${{ matrix.rid }} --self-contained true \
+          # The version the node reports (/api/version) follows the release tag (store-v1.3.1 -> 1.3.1).
+          VP=""; if [ -n "$RELEASE_TAG" ]; then VP="-p:Version=${RELEASE_TAG#store-v}"; fi
+          dotnet publish deltanium-store/deltanium-store.csproj -c Release -r ${{ matrix.rid }} --self-contained true $VP \
             -p:PublishSingleFile=true -p:IncludeNativeLibrariesForSelfExtract=true -p:EnableCompressionInSingleFile=true -p:DebugType=None \
             -o "pkg/deltanium-store-${{ matrix.rid }}"
           cp deltanium-store/installer/README.txt "pkg/deltanium-store-${{ matrix.rid }}/"
