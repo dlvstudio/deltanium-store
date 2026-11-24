@@ -1,0 +1,29 @@
+# Unit tests on every push and pull request (free for this public repository).
+# RealMysql* integration tests need a MySQL server and are run locally instead.
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: deltanium-store
+    steps:
+      - uses: actions/checkout@v4
+        with: { path: deltanium-store }
+      - uses: actions/checkout@v4
+        with: { repository: dlvstudio/deltanium-core, path: deltanium-core }
+      - uses: actions/setup-dotnet@v4
+        with: { dotnet-version: '8.0.x' }
+      - name: Unit tests
+        run: dotnet test deltanium-store.Tests/deltanium-store.Tests.csproj -c Release --filter "FullyQualifiedName!~RealMysql" --blame-hang-timeout 5m --logger "console;verbosity=minimal"
