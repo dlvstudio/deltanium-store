@@ -21,6 +21,12 @@ namespace DeltaniumStore.Services
         /// Submit a storage operation transaction with contract proof.
         /// </summary>
         Task<SubmitResult> SubmitStorageOperationAsync(FileMetadata metadata, StorageContract contract);
+
+        /// <summary>
+        /// Whether the Blocker already holds this tx (in a block or in its mempool). Null when the Blocker
+        /// cannot be asked, so the caller must not assume either way.
+        /// </summary>
+        Task<bool?> IsTxKnownAsync(string txId);
     }
 
     public record SubmitResult(bool Success, string? ErrorMessage = null, HttpStatusCode? StatusCode = null);
@@ -83,7 +89,9 @@ namespace DeltaniumStore.Services
             try
             {
                 var timestamp = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
-                var txId = GenerateTransactionId();
+                // One contract → one StorageOperation: the id comes from the contract, so a retry (including
+                // StorageOperationResubmitService) can be checked against the chain and is never a second tx.
+                var txId = StorageOperationTxId(contract.ContractId);
 
                 var txBody = new
                 {
@@ -143,6 +151,12 @@ namespace DeltaniumStore.Services
                         }
 
                         var errorBody = await resp.Content.ReadAsStringAsync();
+                        if (resp.StatusCode == HttpStatusCode.Conflict)
+                        {
+                            // "Duplicate tx": the Blocker already has this contract's tx (an earlier attempt got through).
+                            _logger.LogInformation($"[BlockchainService] StorageOperation {txId} already known to the Blocker.");
+                            return new SubmitResult(true);
+                        }
                         _logger.LogError($"[BlockchainService] Submit failed ({resp.StatusCode}): {errorBody}");
                         lastError = errorBody;
                         lastStatus = resp.StatusCode;
@@ -176,9 +190,29 @@ namespace DeltaniumStore.Services
             }
         }
 
-        private string GenerateTransactionId()
+        /// <summary>Deterministic 32-hex tx id for a contract's StorageOperation.</summary>
+        public static string StorageOperationTxId(string contractId)
         {
-            return Guid.NewGuid().ToString("N").Substring(0, 32);
+            var hash = System.Security.Cryptography.SHA256.HashData(
+                System.Text.Encoding.UTF8.GetBytes("DELTANIUM-STORAGE-OPERATION\n" + contractId));
+            return Convert.ToHexString(hash).ToLowerInvariant().Substring(0, 32);
+        }
+
+        public async Task<bool?> IsTxKnownAsync(string txId)
+        {
+            try
+            {
+                using var resp = await _httpClient.GetAsync($"{_blockerApiUrl}/api/explorer/txs/{Uri.EscapeDataString(txId)}");
+                if (resp.IsSuccessStatusCode) return true;
+                if (resp.StatusCode == HttpStatusCode.NotFound) return false;
+                _logger.LogWarning("[BlockchainService] Tx lookup {TxId} returned {Status}", txId, resp.StatusCode);
+                return null;
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning("[BlockchainService] Tx lookup {TxId} failed: {Error}", txId, ex.Message);
+                return null;
+            }
         }
 
         private static bool ShouldRetry(HttpStatusCode statusCode)

@@ -46,6 +46,14 @@ namespace DeltaniumStore.Models
         public string Status { get; set; } = "Active"; // "PendingAppApproval", "Active", "Completed", "Cancelled"
         public long? BlockchainSubmittedAtUnix { get; set; } = null;
 
+        // Store-side bookkeeping for the StorageOperation submit; not part of the signed contract content.
+        /// <summary>File whose upload passed the submit checks; set before the first submit so a failed submit
+        /// can be retried later by StorageOperationResubmitService.</summary>
+        public string? PendingSubmitFileId { get; set; }
+        public int SubmitAttempts { get; set; }
+        public long? LastSubmitAttemptUnix { get; set; }
+        public string? LastSubmitError { get; set; }
+
         /// <summary>Options for canonical JSON: compact, no indentation. Must match Blocker.</summary>
         private static readonly JsonSerializerOptions CanonicalJsonOptions = new() { WriteIndented = false };
 

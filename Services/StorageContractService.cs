@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
 using System.Text.Json;
 using System.Threading.Tasks;
 using DeltaniumStore.Data;
@@ -47,6 +48,9 @@ namespace DeltaniumStore.Services
         /// List all active contracts for a user.
         /// </summary>
         Task<List<StorageContract>> ListActiveContractsAsync(string userPubKey);
+
+        /// <summary>Active contracts whose StorageOperation has not reached the Blocker yet.</summary>
+        Task<List<StorageContract>> ListUnsubmittedContractsAsync();
     }
 
     public class StorageContractService : IStorageContractService
@@ -174,6 +178,14 @@ namespace DeltaniumStore.Services
             }
 
             return active;
+        }
+
+        public Task<List<StorageContract>> ListUnsubmittedContractsAsync()
+        {
+            var list = _contractCache.Values
+                .Where(c => c.Status == "Active" && !(c.BlockchainSubmittedAtUnix > 0))
+                .ToList();
+            return Task.FromResult(list);
         }
 
         private async Task SaveContractAsync(StorageContract contract)

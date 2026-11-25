@@ -747,14 +747,23 @@ namespace DeltaniumStore.Controllers
                     return new SubmitResult(false, "AppPublicKey mismatch");
                 }
 
+                // Every check passed: remember the file first, so StorageOperationResubmitService can retry
+                // this contract if the submit below fails (Blocker down, restarting, unreachable).
+                if (string.IsNullOrEmpty(contract.PendingSubmitFileId))
+                    contract.PendingSubmitFileId = metadata.FileId;
+                contract.SubmitAttempts++;
+                contract.LastSubmitAttemptUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
                 var submitResult = await _blockchainService.SubmitStorageOperationAsync(metadata, contract);
                 if (!submitResult.Success)
                 {
-                    Log.Warning($"[Raw API] TrySubmitStorageContract: SubmitStorageOperationAsync returned false for contract {metadata.ContractId}");
+                    contract.LastSubmitError = submitResult.ErrorMessage;
+                    await _contractService.UpdateContractAsync(contract);
+                    Log.Warning($"[Raw API] TrySubmitStorageContract: SubmitStorageOperationAsync returned false for contract {metadata.ContractId}; will be retried");
                     return submitResult;
                 }
 
                 contract.BlockchainSubmittedAtUnix = DateTimeOffset.UtcNow.ToUnixTimeSeconds();
+                contract.LastSubmitError = null;
                 await _contractService.UpdateContractAsync(contract);
                 Log.Information($"[Raw API] TrySubmitStorageContract: Successfully submitted contract {metadata.ContractId} to blockchain.");
                 return new SubmitResult(true);

@@ -26,6 +26,8 @@ namespace DeltaniumStore.Services
         /// <summary>All metadata rows for a fileId (internal re-replication, TOKENOMICS_V2 §6).</summary>
         Task<List<FileMetadata>> GetAllMetadataForFileAsync(string fileId);
         Task<BlockMetadata?> GetBlockMetadataAsync(string blockId);
+        /// <summary>Metadata rows uploaded under a storage contract (StorageOperation resubmit).</summary>
+        Task<List<FileMetadata>> ListMetadataByContractAsync(string contractId);
     }
 
     public class FileStorageService : IFileStorageService
@@ -180,6 +182,13 @@ namespace DeltaniumStore.Services
                 var hash = await sha256.ComputeHashAsync(stream);
                 return BitConverter.ToString(hash).Replace("-", "").ToLowerInvariant();
             }
+        }
+
+        public Task<List<FileMetadata>> ListMetadataByContractAsync(string contractId)
+        {
+            LoadMetadata();
+            return Task.FromResult(_fileMetadataCache.Values
+                .Where(m => string.Equals(m.ContractId, contractId, StringComparison.OrdinalIgnoreCase)).ToList());
         }
 
         public Task<List<FileMetadata>> GetAllMetadataForFileAsync(string fileId)

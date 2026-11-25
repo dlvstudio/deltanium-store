@@ -131,6 +131,33 @@ public class BlockchainServiceTests
         result.StatusCode.Should().Be(HttpStatusCode.ServiceUnavailable);
     }
 
+    [Fact]
+    public async Task SubmitStorageOperationAsync_UsesContractTxId_And_TreatsDuplicateAsSubmitted()
+    {
+        var (service, handler) = CreateServiceWithCapturingHandler(HttpStatusCode.Conflict);
+        var contract = TestDataBuilder.CreateStorageContract();
+        contract.ContractHash = "h";
+        contract.AppSignature = "a";
+        contract.StorageNodeSignature = "s";
+        var metadata = TestDataBuilder.CreateFileMetadata();
+
+        var result = await service.SubmitStorageOperationAsync(metadata, contract);
+
+        result.Success.Should().BeTrue();
+        using var doc = JsonDocument.Parse(handler.LastRequestContent!);
+        doc.RootElement.GetProperty("id").GetString().Should().Be(BlockchainService.StorageOperationTxId(contract.ContractId));
+    }
+
+    [Theory]
+    [InlineData(HttpStatusCode.OK, true)]
+    [InlineData(HttpStatusCode.NotFound, false)]
+    [InlineData(HttpStatusCode.ServiceUnavailable, null)]
+    public async Task IsTxKnownAsync_MapsBlockerLookup(HttpStatusCode status, bool? expected)
+    {
+        var (service, _) = CreateServiceWithCapturingHandler(status);
+        (await service.IsTxKnownAsync("abc")).Should().Be(expected);
+    }
+
     private sealed class CapturingHandler : HttpMessageHandler
     {
         private readonly HttpStatusCode _responseStatus;
