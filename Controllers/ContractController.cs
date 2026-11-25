@@ -62,12 +62,17 @@ namespace DeltaniumStore.Controllers
                 if (request.StartDateUnix <= 0)
                     return BadRequest("StartDateUnix must be positive");
 
-                // 🆕 Storage Node calculates fee based on terms
-                var (calculatedFee, feeBasis) = CalculateStorageFee(
-                    request.ContractType,
-                    request.StartDateUnix,
-                    request.EndDateUnix,
-                    request.TotalFileSize);
+                if (request.CentralCharge is < 0 or > 1_000_000_000m)
+                    return BadRequest("CentralCharge must be between 0 and 1,000,000,000 D");
+
+                // Central bills storage; the contract records that charge when the App passes it.
+                var (calculatedFee, feeBasis) = request.CentralCharge is { } charge
+                    ? (Math.Round(charge, 10), "Central storage charge")
+                    : CalculateStorageFee(
+                        request.ContractType,
+                        request.StartDateUnix,
+                        request.EndDateUnix,
+                        request.TotalFileSize);
 
                 // Create contract with Storage Node-determined fee
                 var contract = new StorageContract
@@ -150,8 +155,8 @@ namespace DeltaniumStore.Controllers
             // Calculate fee
             decimal calculatedFee = basePricePerGBPerMonth * sizeGB * durationMonths;
             
-            // v2 §6: minimum fee per contract (default 10 D = 10 VND).
-            decimal minContractFee = _configuration.GetValue<decimal>("StorageNode:Pricing:MinContractFee", 10m);
+            // v2 §6: minimum fee per contract when the App does not pass the Central charge (default 1 D = 1 VND).
+            decimal minContractFee = _configuration.GetValue<decimal>("StorageNode:Pricing:MinContractFee", 1m);
             if (calculatedFee < minContractFee)
                 calculatedFee = minContractFee;
 
@@ -564,5 +569,11 @@ namespace DeltaniumStore.Controllers
         public long? EndDateUnix { get; set; } // When storage ends (required for TimeFixed)
         public long TotalFileSize { get; set; } // Max total file size in bytes
         public List<string> FileIds { get; set; } = new(); // Files to store
+        /// <summary>
+        /// What Central charges the App for this item (GET /api/storedfile/quote → charge). When given, the contract
+        /// records this fee, so the fee signed and put on chain is the D the user actually pays. Central does the
+        /// billing; without it the Store prices the contract itself.
+        /// </summary>
+        public decimal? CentralCharge { get; set; }
     }
 }
