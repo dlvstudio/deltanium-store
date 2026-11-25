@@ -155,8 +155,8 @@ namespace DeltaniumStore.Controllers
             // Calculate fee
             decimal calculatedFee = basePricePerGBPerMonth * sizeGB * durationMonths;
             
-            // v2 §6: minimum fee per contract when the App does not pass the Central charge (default 1 D = 1 VND).
-            decimal minContractFee = _configuration.GetValue<decimal>("StorageNode:Pricing:MinContractFee", 1m);
+            // v2 §6: minimum fee per contract when the App does not pass the Central charge (default 0.1 D).
+            decimal minContractFee = _configuration.GetValue<decimal>("StorageNode:Pricing:MinContractFee", 0.1m);
             if (calculatedFee < minContractFee)
                 calculatedFee = minContractFee;
 
