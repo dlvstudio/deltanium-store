@@ -130,7 +130,8 @@ namespace DeltaniumStore.Security
             catch { return false; }
         }
 
-        private static async Task<string?> GetCentralKeyAsync(IConfiguration config, IHttpClientFactory? http)
+        /// <summary>Central's public key: pinned (CENTRAL_PUBLIC_KEY / CentralApi:PublicKey), else fetched once.</summary>
+        public static async Task<string?> GetCentralKeyAsync(IConfiguration config, IHttpClientFactory? http)
         {
             if (!string.IsNullOrWhiteSpace(CentralKeyOverride)) return CentralKeyOverride;
             var pinned = Environment.GetEnvironmentVariable("CENTRAL_PUBLIC_KEY") ?? config["CentralApi:PublicKey"];

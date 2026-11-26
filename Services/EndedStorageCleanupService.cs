@@ -1,8 +1,9 @@
 using System;
-using System.Collections.Generic;
 using System.Linq;
+using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using DeltaniumStore.Security;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.Extensions.Hosting;
@@ -11,27 +12,31 @@ using Microsoft.Extensions.Logging;
 namespace DeltaniumStore.Services
 {
     /// <summary>
-    /// Deletes items nobody pays for any more. The Store asks Central (signed with its node key) which items it
-    /// holds whose storage contract ended: Expired (renewal unpaid through the 30-day grace) or Closed (deleted
-    /// by the owner, or a fixed term that ran out), at least StoreDeleteAfterDays ago. Central never deletes on a
-    /// Store; a Store that was offline catches up on its next pass.
+    /// Deletes items nobody pays for any more, using the chain alone. Central publishes each item's term on chain
+    /// (StorageTerm txs: paid until, delete after); this Store reads them from its Blocker, checks Central's
+    /// signature on every tx itself, and deletes an item it holds once the chain says its deleteAfter has passed.
+    /// Items with no term on chain are never deleted.
     ///
-    /// Reactions and comments on a deleted post are not deleted here (each has its own contract and owner): the
-    /// Store reports them to Central, which stops renewing them, and they come back as Closed a month later.
+    /// Reactions and comments on a deleted post have terms of their own and are not deleted here: the Store reports
+    /// them to Central, which stops renewing them, and their own term on chain then runs out.
     /// </summary>
     public class EndedStorageCleanupService : BackgroundService
     {
         private readonly IServiceProvider _services;
         private readonly IFileStorageService _files;
+        private readonly StorageTermIndex _index;
+        private readonly IConfiguration _config;
         private readonly ILogger<EndedStorageCleanupService> _log;
         private readonly TimeSpan _interval;
         private readonly bool _enabled;
 
-        public EndedStorageCleanupService(IServiceProvider services, IFileStorageService files, IConfiguration config,
-            ILogger<EndedStorageCleanupService> log)
+        public EndedStorageCleanupService(IServiceProvider services, IFileStorageService files, StorageTermIndex index,
+            IConfiguration config, ILogger<EndedStorageCleanupService> log)
         {
             _services = services;
             _files = files;
+            _index = index;
+            _config = config;
             _log = log;
             _interval = TimeSpan.FromHours(Math.Max(0.1, config.GetValue("StorageNode:Cleanup:IntervalHours", 6.0)));
             _enabled = config.GetValue("StorageNode:Cleanup:Enabled", true);
@@ -45,11 +50,18 @@ namespace DeltaniumStore.Services
             {
                 try
                 {
-                    var central = _services.GetRequiredService<ICentralApiService>();
-                    var (items, entries, blocks, reported) = await RunOnceAsync(central, stoppingToken);
-                    if (items > 0)
-                        _log.LogInformation("[Cleanup] {Items} ended item(s): deleted {Entries} metadata row(s), {Blocks} block(s); {Reported} reaction(s)/comment(s) reported",
-                            items, entries, blocks, reported);
+                    var key = await CentralRequestAuth.GetCentralKeyAsync(_config, _services.GetService<IHttpClientFactory>());
+                    if (string.IsNullOrWhiteSpace(key))
+                        _log.LogWarning("[Cleanup] Central public key unknown: chain terms cannot be checked, nothing deleted");
+                    else
+                    {
+                        var r = await RunOnceAsync(_services.GetRequiredService<IStorageTermSource>(), key,
+                            _services.GetRequiredService<ICentralApiService>(), DateTimeOffset.UtcNow.ToUnixTimeSeconds(), stoppingToken);
+                        if (r.Read > 0 || r.Items > 0)
+                            _log.LogInformation("[Cleanup] Chain: {Read} StorageTerm tx(s) read, {Rejected} rejected (bad signature); " +
+                                "{Items} item(s) past their term: deleted {Entries} metadata row(s), {Blocks} block(s); {Reported} reaction(s)/comment(s) reported",
+                                r.Read, r.Rejected, r.Items, r.Entries, r.Blocks, r.Reported);
+                    }
                 }
                 catch (Exception ex) when (ex is not OperationCanceledException)
                 {
@@ -59,25 +71,29 @@ namespace DeltaniumStore.Services
             }
         }
 
-        /// <summary>One pass: items Central listed, metadata rows and blocks deleted, children reported.</summary>
-        public async Task<(int Items, int Entries, int Blocks, int Reported)> RunOnceAsync(ICentralApiService central, CancellationToken ct = default)
+        public record PassResult(int Read, int Rejected, int Items, int Entries, int Blocks, int Reported);
+
+        /// <summary>One pass: read new terms from the chain, then delete what they say has run out.</summary>
+        public async Task<PassResult> RunOnceAsync(IStorageTermSource chain, string centralPublicKey, ICentralApiService central,
+            long nowUnix, CancellationToken ct = default)
         {
-            var ended = await central.GetEndedItemsAsync();
-            if (ended == null || ended.Count == 0) return (0, 0, 0, 0);
+            var sync = await _index.SyncAsync(chain, centralPublicKey);
             int entries = 0, blocks = 0, reported = 0;
-            foreach (var item in ended)
+            var due = _index.Due(nowUnix);
+            foreach (var (fileId, term) in due)
             {
                 ct.ThrowIfCancellationRequested();
-                var d = await _files.DeleteEndedItemAsync(item.FileId, item.BlockIds);
+                var d = await _files.DeleteEndedItemAsync(fileId, term.Blocks ?? new());
                 entries += d.Entries;
                 blocks += d.Blocks;
                 if (d.ChildFileIds.Count > 0)
                 {
-                    await central.ReportChildrenEndedAsync(item.FileId, d.ChildFileIds);
+                    await central.ReportChildrenEndedAsync(fileId, d.ChildFileIds);
                     reported += d.ChildFileIds.Count;
                 }
+                _index.MarkDeleted(fileId);
             }
-            return (ended.Count, entries, blocks, reported);
+            return new PassResult(sync?.Read ?? 0, sync?.Rejected ?? 0, due.Count, entries, blocks, reported);
         }
     }
 }

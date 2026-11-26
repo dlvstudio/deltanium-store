@@ -201,6 +201,9 @@ builder.Services.AddSingleton<IStorageContractService>(sp =>
 builder.Services.AddHttpClient<IBlockchainService, BlockchainService>();
 // Puts contracts whose StorageOperation failed during the upload on chain later (Blocker down or restarting).
 builder.Services.AddHostedService<StorageOperationResubmitService>();
+// Deletes items whose storage term on chain (StorageTerm txs, Central-signed) has run out.
+builder.Services.AddSingleton(_ => new StorageTermIndex(storageBasePath));
+builder.Services.AddHttpClient<IStorageTermSource, BlockerStorageTermSource>();
 builder.Services.AddHostedService<EndedStorageCleanupService>();
 
 // Configure HTTP client and Central API service
