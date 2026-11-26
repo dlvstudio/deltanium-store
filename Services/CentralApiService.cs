@@ -19,7 +19,14 @@ namespace DeltaniumStore.Services
         Task<List<string>> GetFollowingUsersAsync(string userPublicKey);
         Task<Dictionary<string, object>> GetUserInfoAsync(string userPublicKey);
         Task<string?> ValidatePreTokenAsync(string token);
+        /// <summary>Items this Store holds whose storage contract ended long enough ago to delete (null when Central is unreachable).</summary>
+        Task<List<EndedItem>?> GetEndedItemsAsync();
+        /// <summary>Tell Central the reactions and comments on an ended post, so it stops renewing them.</summary>
+        Task<int> ReportChildrenEndedAsync(string parentFileId, IReadOnlyCollection<string> childFileIds);
     }
+
+    /// <summary>An item whose storage contract ended (Expired: renewal unpaid; Closed: deleted or term over).</summary>
+    public record EndedItem(string FileId, string Status, List<string> BlockIds);
 
     public class CentralApiService : ICentralApiService
     {
@@ -147,6 +154,68 @@ namespace DeltaniumStore.Services
             request.Headers.TryAddWithoutValidation("X-User-PubKey", key.PubKey.ToHex());
             request.Headers.TryAddWithoutValidation("X-Timestamp", ts);
             request.Headers.TryAddWithoutValidation("X-Signature", Convert.ToBase64String(sig.ToDER()));
+        }
+
+        private async Task<JsonElement?> PostSignedAsync(string path, string body)
+        {
+            var key = _nodeKey();
+            if (key == null) return null;
+            using var request = new HttpRequestMessage(HttpMethod.Post, _centralApiUrl.TrimEnd('/') + path)
+            {
+                Content = new StringContent(body, System.Text.Encoding.UTF8, "application/json")
+            };
+            SignAsNode(request, body, key);
+            var resp = await _httpClient.SendAsync(request);
+            if (!resp.IsSuccessStatusCode)
+            {
+                Console.WriteLine($"[CentralApiService] {path}: HTTP {(int)resp.StatusCode}");
+                return null;
+            }
+            return JsonSerializer.Deserialize<JsonElement>(await resp.Content.ReadAsStringAsync());
+        }
+
+        public async Task<List<EndedItem>?> GetEndedItemsAsync()
+        {
+            try
+            {
+                var doc = await PostSignedAsync("/api/storedfile/ended-for-node", "{}");
+                if (doc is not { ValueKind: JsonValueKind.Object } d || !d.TryGetProperty("items", out var items) ||
+                    items.ValueKind != JsonValueKind.Array)
+                    return null;
+                var list = new List<EndedItem>();
+                foreach (var it in items.EnumerateArray())
+                {
+                    var id = it.TryGetProperty("fileId", out var f) ? f.GetString() : null;
+                    if (string.IsNullOrWhiteSpace(id)) continue;
+                    var status = it.TryGetProperty("status", out var st) ? st.GetString() ?? "" : "";
+                    var blocks = it.TryGetProperty("blockIds", out var b) && b.ValueKind == JsonValueKind.Array
+                        ? b.EnumerateArray().Select(x => x.GetString()).Where(x => !string.IsNullOrWhiteSpace(x)).Select(x => x!).ToList()
+                        : new List<string>();
+                    list.Add(new EndedItem(id!, status, blocks));
+                }
+                return list;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[CentralApiService] ended-for-node failed: {ex.Message}");
+                return null;
+            }
+        }
+
+        public async Task<int> ReportChildrenEndedAsync(string parentFileId, IReadOnlyCollection<string> childFileIds)
+        {
+            if (childFileIds.Count == 0) return 0;
+            try
+            {
+                var body = JsonSerializer.Serialize(new { parentFileId, fileIds = childFileIds });
+                var doc = await PostSignedAsync("/api/storedfile/children-ended", body);
+                return doc is { ValueKind: JsonValueKind.Object } d && d.TryGetProperty("stopped", out var s) && s.TryGetInt32(out var n) ? n : 0;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[CentralApiService] children-ended failed: {ex.Message}");
+                return 0;
+            }
         }
 
         /// <summary>

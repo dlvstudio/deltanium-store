@@ -28,7 +28,15 @@ namespace DeltaniumStore.Services
         Task<BlockMetadata?> GetBlockMetadataAsync(string blockId);
         /// <summary>Metadata rows uploaded under a storage contract (StorageOperation resubmit).</summary>
         Task<List<FileMetadata>> ListMetadataByContractAsync(string contractId);
+        /// <summary>
+        /// Delete an item whose storage contract ended: its metadata rows (the fileId itself and every row whose
+        /// block 0 is one of <paramref name="blockIds"/>) and its blocks. Returns what was deleted and the fileIds
+        /// of the reactions and comments on it (left in place: they have contracts of their own).
+        /// </summary>
+        Task<EndedItemDeletion> DeleteEndedItemAsync(string fileId, IReadOnlyCollection<string> blockIds);
     }
+
+    public record EndedItemDeletion(int Entries, int Blocks, List<string> ChildFileIds);
 
     public class FileStorageService : IFileStorageService
     {
@@ -846,6 +854,45 @@ namespace DeltaniumStore.Services
                 }
             }
             return restored;
+        }
+
+        private static bool SafeId(string id) =>
+            !string.IsNullOrWhiteSpace(id) && id.Length <= 200 && id.All(c => char.IsAsciiLetterOrDigit(c) || c is '-' or '_' or '.') && !id.Contains("..");
+
+        public Task<EndedItemDeletion> DeleteEndedItemAsync(string fileId, IReadOnlyCollection<string> blockIds)
+        {
+            EnsureStorageDirectories();
+            LoadMetadata();
+            var blocks = new HashSet<string>(blockIds.Where(SafeId), StringComparer.Ordinal);
+            var entries = _fileMetadataCache.Values
+                .Where(m => m.FileId == fileId || (!string.IsNullOrEmpty(m.FirstBlockId) && blocks.Contains(m.FirstBlockId)))
+                .ToList();
+            var ids = new HashSet<string>(entries.Select(m => m.FileId)) { fileId };
+            var children = _fileMetadataCache.Values
+                .Where(m => !string.IsNullOrEmpty(m.ParentFileId) && ids.Contains(m.ParentFileId!) && !ids.Contains(m.FileId))
+                .Select(m => m.FileId).Distinct().ToList();
+
+            var deletedEntries = 0;
+            foreach (var m in entries)
+            {
+                if (!string.IsNullOrEmpty(m.FirstBlockId) && SafeId(m.FirstBlockId)) blocks.Add(m.FirstBlockId);
+                // Stores may share one metadata database: another Store can delete the same row first.
+                try { _fileMetadataStore.Delete(m.FileId); deletedEntries++; }
+                catch (Exception ex) { Console.WriteLine($"Delete ended {m.FileId}: {ex.Message}"); }
+                _fileMetadataCache.Remove(m.FileId);
+            }
+            var deletedBlocks = 0;
+            foreach (var b in blocks)
+            {
+                var path = Path.Combine(_blockDataPath, $"{b}.data");
+                try
+                {
+                    if (File.Exists(path)) { File.Delete(path); deletedBlocks++; }
+                    if (_blockMetadataCache.Remove(b)) _blockMetadataStore.Delete(b);
+                }
+                catch (Exception ex) { Console.WriteLine($"Delete ended block {b}: {ex.Message}"); }
+            }
+            return Task.FromResult(new EndedItemDeletion(deletedEntries, deletedBlocks, children));
         }
 
         public async Task<bool> DeleteFileByFileIdAsync(string fileId)
