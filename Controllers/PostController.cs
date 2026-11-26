@@ -88,14 +88,15 @@ namespace DeltaniumStore.Controllers
                 mine = mine.Where(r => string.Equals(r.Kind, kind, StringComparison.OrdinalIgnoreCase));
             }
 
-            int removed = 0;
+            var removedIds = new List<string>();
             foreach (var r in mine.ToList())
             {
                 var ok = await _fileStorage.DeleteFileByFileIdAsync(r.FileId);
-                if (ok) removed++;
+                if (ok) removedIds.Add(r.FileId);
             }
 
-            return Ok(new { Removed = removed });
+            // FileIds: the App asks Central to stop renewing their storage.
+            return Ok(new { Removed = removedIds.Count, FileIds = removedIds });
         }
 
         /// <summary>
