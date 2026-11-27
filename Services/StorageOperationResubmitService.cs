@@ -24,7 +24,7 @@ namespace DeltaniumStore.Services
         /// <summary>Contracts created before this lack the marker (Store 1.3.1 and older).</summary>
         public static readonly long LegacyBeforeUnix = new DateTimeOffset(2026, 11, 26, 0, 0, 0, TimeSpan.Zero).ToUnixTimeSeconds();
 
-        private static readonly HashSet<string> SubmittedTypes = new(StringComparer.OrdinalIgnoreCase)
+        private static readonly HashSet<string> LegacySubmittedTypes = new(StringComparer.OrdinalIgnoreCase)
             { "post", "react", "comment", "chat_message" };
 
         private readonly IStorageContractService _contracts;
@@ -136,9 +136,12 @@ namespace DeltaniumStore.Services
         private async Task<FileMetadata?> FindMetadataAsync(StorageContract contract)
         {
             var rows = await _files.ListMetadataByContractAsync(contract.ContractId);
-            rows = rows.Where(m => SubmittedTypes.Contains(m.Type ?? "")).ToList();
+            // Every stored item has its own contract now (posts, comments, reactions, files, chat messages), and the
+            // upload recorded which file it submits for: retry exactly that one, whatever its type.
             if (!string.IsNullOrEmpty(contract.PendingSubmitFileId))
                 return rows.FirstOrDefault(m => string.Equals(m.FileId, contract.PendingSubmitFileId, StringComparison.OrdinalIgnoreCase));
+            // Legacy contracts only ever covered these types.
+            rows = rows.Where(m => LegacySubmittedTypes.Contains(m.Type ?? "")).ToList();
 
             // Contracts from before the marker: the upload's own checks are not recorded, so require that the
             // file belongs to the contract's App (same rule the upload applied with the uploader's key).

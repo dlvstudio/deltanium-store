@@ -711,14 +711,8 @@ namespace DeltaniumStore.Controllers
                     return new SubmitResult(false, "No ContractId");
                 }
 
-                if (!string.Equals(metadata.Type, "post", StringComparison.OrdinalIgnoreCase) &&
-                    !string.Equals(metadata.Type, "react", StringComparison.OrdinalIgnoreCase) &&
-                    !string.Equals(metadata.Type, "comment", StringComparison.OrdinalIgnoreCase) &&
-                    !string.Equals(metadata.Type, "chat_message", StringComparison.OrdinalIgnoreCase))
-                {
-                    Log.Information($"[Raw API] TrySubmitStorageContract: Metadata type is '{metadata.Type}'. Not a post/react/comment/chat. Skipping submission.");
-                    return new SubmitResult(false, "Not a post/react/comment/chat_message");
-                }
+                // Every stored item (post, comment, reaction, attached file, chat message) comes with its own contract
+                // with this Store and goes on chain the same way: no type is left out.
 
                 var contract = await _contractService.GetContractAsync(metadata.ContractId);
                 if (contract == null)

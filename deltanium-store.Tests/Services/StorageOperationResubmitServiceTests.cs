@@ -138,11 +138,23 @@ public class StorageOperationResubmitServiceTests
     }
 
     [Fact]
-    public async Task Plain_files_are_not_submitted()
+    public async Task Attached_files_under_their_own_contract_are_resubmitted_like_posts()
     {
-        Pending(Now - 600, type: "file");
+        // Every stored item has its own contract now, attached files and chat messages included.
+        var (c, f) = Pending(Now - 600, type: "file");
+        _chain.Setup(x => x.IsTxKnownAsync(It.IsAny<string>())).ReturnsAsync(false);
+        _chain.Setup(x => x.SubmitStorageOperationAsync(f, c)).ReturnsAsync(new SubmitResult(true));
+
+        (await Build().RunOnceAsync(Now)).Should().Be(1);
+        c.BlockchainSubmittedAtUnix.Should().BeGreaterThan(0);
+    }
+
+    [Fact]
+    public async Task Legacy_contracts_never_pick_a_plain_file()
+    {
+        Pending(StorageOperationResubmitService.LegacyBeforeUnix - 86400, marked: false, type: "file");
         (await Build().RunOnceAsync(Now)).Should().Be(0);
-        _chain.Verify(x => x.IsTxKnownAsync(It.IsAny<string>()), Times.Never);
+        _chain.Verify(x => x.SubmitStorageOperationAsync(It.IsAny<FileMetadata>(), It.IsAny<StorageContract>()), Times.Never);
     }
 
     [Fact]
