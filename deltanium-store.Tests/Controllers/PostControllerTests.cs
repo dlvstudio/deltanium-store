@@ -148,8 +148,40 @@ namespace deltanium_store.Tests.Controllers
             // Act
             var result = await _controller.DeleteComment(commentId);
 
-            // Assert
-            result.Should().BeOfType<ForbidResult>();
+            // Assert: a real 403 (Forbid("...") treated the message as an auth scheme and threw at run time)
+            result.Should().BeOfType<ObjectResult>().Which.StatusCode.Should().Be(403);
+        }
+
+        [Fact]
+        public async Task DeletePost_WhenOwner_RemovesEveryEntryOfThePost()
+        {
+            var postId = Guid.NewGuid().ToString();
+            var userKey = TestDataBuilder.CreateCompressedPublicKey();
+            _controller.HttpContext.Request.Headers["X-User-PubKey"] = userKey;
+            _mockFileStorage.Setup(s => s.GetFileMetadataAsync(postId, userKey))
+                .ReturnsAsync(TestDataBuilder.CreateFileMetadata(type: "post", ownerPubKey: userKey));
+            _mockFileStorage.Setup(s => s.DeleteEndedItemAsync(postId, It.IsAny<IReadOnlyCollection<string>>()))
+                .ReturnsAsync(new EndedItemDeletion(2, 1, new List<string>()));
+
+            var result = await _controller.DeletePost(postId);
+
+            result.Should().BeOfType<OkObjectResult>();
+            _mockFileStorage.Verify(s => s.DeleteEndedItemAsync(postId, It.IsAny<IReadOnlyCollection<string>>()), Times.Once);
+        }
+
+        [Fact]
+        public async Task DeletePost_NotOwner_Is403_And_Missing_Is404()
+        {
+            var postId = Guid.NewGuid().ToString();
+            var userKey = TestDataBuilder.CreateCompressedPublicKey();
+            _controller.HttpContext.Request.Headers["X-User-PubKey"] = userKey;
+            _mockFileStorage.Setup(s => s.GetFileMetadataAsync(postId, userKey))
+                .ReturnsAsync(TestDataBuilder.CreateFileMetadata(type: "post", ownerPubKey: TestDataBuilder.CreateCompressedPublicKey()));
+            (await _controller.DeletePost(postId)).Should().BeOfType<ObjectResult>().Which.StatusCode.Should().Be(403);
+
+            _mockFileStorage.Setup(s => s.GetFileMetadataAsync(postId, userKey)).ReturnsAsync((FileMetadata?)null);
+            (await _controller.DeletePost(postId)).Should().BeOfType<NotFoundObjectResult>();
+            _mockFileStorage.Verify(s => s.DeleteEndedItemAsync(It.IsAny<string>(), It.IsAny<IReadOnlyCollection<string>>()), Times.Never);
         }
 
         [Fact]

@@ -182,7 +182,8 @@ namespace DeltaniumStore.Controllers
             if (string.IsNullOrEmpty(comment.OwnerPubKey) || 
                 !DeltaniumStore.Services.PublicKeyUtils.AreKeysEqual(comment.OwnerPubKey, normalizedUser))
             {
-                return Forbid("Only comment owner can delete the comment");
+                // Forbid(string) takes an auth scheme name, not a message: it threw (500) instead of answering 403.
+                return StatusCode(StatusCodes.Status403Forbidden, "Only comment owner can delete the comment");
             }
 
             var ok = await _fileStorage.DeleteFileByFileIdAsync(commentFileId);
@@ -194,6 +195,36 @@ namespace DeltaniumStore.Controllers
             {
                 return StatusCode(500, new { Error = "Failed to delete comment" });
             }
+        }
+
+        /// <summary>
+        /// Delete a post (only by its owner). The post leaves this Store at once; the app then asks Central to stop
+        /// renewing its storage, so the on-chain term turns "stopped" and every other Store holding a copy deletes it
+        /// (and reports its comments and reactions as ended) once the paid period runs out.
+        /// </summary>
+        [HttpDelete("{postFileId}")]
+        [ProducesResponseType(StatusCodes.Status200OK)]
+        [ProducesResponseType(StatusCodes.Status403Forbidden)]
+        [ProducesResponseType(StatusCodes.Status404NotFound)]
+        public async Task<IActionResult> DeletePost(string postFileId)
+        {
+            var userPubKey = Request.Headers["X-User-PubKey"].ToString();
+            if (string.IsNullOrEmpty(userPubKey)) return BadRequest("User public key is required");
+            string normalizedUser;
+            try { normalizedUser = DeltaniumStore.Services.PublicKeyUtils.NormalizePublicKey(userPubKey); } catch { normalizedUser = userPubKey; }
+
+            var post = await _fileStorage.GetFileMetadataAsync(postFileId, normalizedUser);
+            if (post == null) return NotFound("Post not found");
+            if (string.IsNullOrEmpty(post.OwnerPubKey) ||
+                !DeltaniumStore.Services.PublicKeyUtils.AreKeysEqual(post.OwnerPubKey, normalizedUser))
+                return StatusCode(StatusCodes.Status403Forbidden, "Only the post owner can delete the post");
+
+            // Every metadata entry of the post (one per recipient it was shared with) and its metadata block, the same
+            // removal the chain-term cleanup does; comments and reactions are left for that cleanup to report.
+            var removed = await _fileStorage.DeleteEndedItemAsync(postFileId, Array.Empty<string>());
+            return removed.Entries > 0
+                ? Ok(new { Deleted = true, PostFileId = postFileId, Entries = removed.Entries })
+                : StatusCode(500, new { Error = "Failed to delete post" });
         }
 
         /// <summary>
